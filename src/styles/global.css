@@ -256,10 +256,11 @@ body {
   color: var(--color-text-secondary);
 }
 
-/* Article / blog post — full bleed hero */
+/* Article / blog post — full bleed hero, flush against nav */
 .article-hero {
   width: 100vw;
   margin-left: calc(-50vw + 50%);
+  margin-top: -2rem;
   max-height: 400px;
   object-fit: cover;
   display: block;
