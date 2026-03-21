@@ -13,21 +13,21 @@ _7th April 2021 · 10 minute read_
 
 # Before we Start
 
-In this guide we will learn about how the**Node.js**application lifecycle works and implement utility functions to better manage it.
+In this guide we will learn about how the **Node.js** application lifecycle works and implement utility functions to better manage it.
 
 ## Building Blocks
 
 ### Node.js 14
 
-For this post, I'll be writing to support**Node.js 14**onwards. The examples below will likely work with earlier versions of**Node.js**, although I have not explicitly tested and confirmed compatibility with these versions.
+For this post, I'll be writing to support **Node.js 14** onwards. The examples below will likely work with earlier versions of **Node.js**, although I have not explicitly tested and confirmed compatibility with these versions.
 
 ### Typescript 4
 
-My examples will be written in**Typescript**, although this should not be thought of as a blocker if you prefer to use**Javascript**.
+My examples will be written in **Typescript**, although this should not be thought of as a blocker if you prefer to use **Javascript**.
 
 ### Jest
 
-There are a few unit tests in the code below written for the**Jest**unit testing framework. The unit tests themselves should be reasonably portable if you prefer to use something else.
+There are a few unit tests in the code below written for the **Jest** unit testing framework. The unit tests themselves should be reasonably portable if you prefer to use something else.
 
 # An Example
 
@@ -54,11 +54,11 @@ What happens to the request if the server never returns a response? Most likely,
 
 ### Database Connection Pools
 
-Let's assume the long running database task is run against a relational database, for example**PostgreSQL**.
+Let's assume the long running database task is run against a relational database, for example **PostgreSQL**.
 
 When abruptly terminated, the database may inadvertently leave open connections that the application was using. This is a problem because relational database servers usually have a limit for open connections and new connections may be refused if the connection limit is exhausted.
 
-> ❗**Warning:**It is almost always recommended to close database connection pools as soon as they are no longer required.
+> ❗ **Warning:** It is almost always recommended to close database connection pools as soon as they are no longer required.
 
 # Enter the Lifecycle Manager
 
@@ -97,7 +97,7 @@ The lifecycle manager has four functions;
 - `delay` - A helper function to safely wait for an indicated period of time still while allowing the application to be gracefully shut down.
 ## Unit Tests
 
-Below is a simple unit test suite for**Jest**that tests the four functions of the lifecycle manager.
+Below is a simple unit test suite for **Jest** that tests the four functions of the lifecycle manager.
 
 ```typescript
 import { lifecycle } from './lifecycle';
@@ -151,11 +151,11 @@ process
   });
 ```
 
-[Signal Events](https://nodejs.org/api/process.html#process_signal_events) are emitted when the**Node.js**process receives a signal from the host. For example, your application will receive a `SIGTERM` event when in**Amazon ECS**or**Kubernetes**when executing a rolling deployment of a new version of your application. If you don't handle the `SIGTERM` event correctly, you may find your environment fails to deploy the new version.
+[Signal Events](https://nodejs.org/api/process.html#process_signal_events) are emitted when the **Node.js** process receives a signal from the host. For example, your application will receive a `SIGTERM` event when in **Amazon ECS** or **Kubernetes** when executing a rolling deployment of a new version of your application. If you don't handle the `SIGTERM` event correctly, you may find your environment fails to deploy the new version.
 
 `SIGTERM`, `SIGINT` and `SIGHUP` are examples of events that you may need to add listeners for depending on your operating system and how your application is run.
 
-> ❗**Warning:**The official [Node.js documentation recommends](https://nodejs.org/api/process.html#process_process_exit_code) using `process.exitCode` instead of `process.exit()` to allow the process to exit gracefully.
+> ❗ **Warning:** The official [Node.js documentation recommends](https://nodejs.org/api/process.html#process_process_exit_code) using `process.exitCode` instead of `process.exit()` to allow the process to exit gracefully.
 
 ### Process Events
 
@@ -173,7 +173,7 @@ process
 
 It's important to note that this type of event should be thought of as a last resort and likely means your application has fallen into an unrecoverable state. [Uncaught Exception](https://nodejs.org/api/process.html#process_event_uncaughtexception) and [Unhandled Rejection](https://nodejs.org/api/process.html#process_event_unhandledrejection) are examples of events you may need to listen to in order to handle errors before executing a graceful shutdown.
 
-> ℹ️**Tip:**Unhandled Promise Rejections can be difficult to diagnose and debug. You can setup [ESLint](https://eslint.org/) to track and prevent unhandled rejections using the [no floating promises](https://www.npmjs.com/package/eslint-plugin-no-floating-promise) rule.
+> ℹ️ **Tip:** Unhandled Promise Rejections can be difficult to diagnose and debug. You can setup [ESLint](https://eslint.org/) to track and prevent unhandled rejections using the [no floating promises](https://www.npmjs.com/package/eslint-plugin-no-floating-promise) rule.
 
 ## Graceful Shutdown
 

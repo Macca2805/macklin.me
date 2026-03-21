@@ -13,11 +13,11 @@ _26th January 2023 · 15 minute read_
 
 # Context
 
-Most of my earliest professional experience is working with OOP Languages such as**C#**and**Java**, although I have been in the tech industry long enough to have used many popular languages in earnest in the last 10 years.
+Most of my earliest professional experience is working with OOP Languages such as **C#** and **Java**, although I have been in the tech industry long enough to have used many popular languages in earnest in the last 10 years.
 
-More recently I have been working a lot with**TypeScript**running on**Node.js**. Coming from an OOP background, I was initially drawn to using classes. However, as I grew more comfortable with the language, I grew more and more skeptical towards**TypeScript’s**implementation of classes.
+More recently I have been working a lot with **TypeScript** running on **Node.js**. Coming from an OOP background, I was initially drawn to using classes. However, as I grew more comfortable with the language, I grew more and more skeptical towards **TypeScript’s** implementation of classes.
 
-My observations are that classes in**TypeScript**are most commonly applied as a bridge for developers who are familiar with OOP languages. However, classes in**TypeScript**differ from expectations set by languages like**C#**and**Java**in a number of significant and potentially hazardous ways.
+My observations are that classes in **TypeScript** are most commonly applied as a bridge for developers who are familiar with OOP languages. However, classes in **TypeScript** differ from expectations set by languages like **C#** and **Java** in a number of significant and potentially hazardous ways.
 
 # Expectations of a class
 
@@ -27,13 +27,13 @@ Classes are described in the [official ](https://docs.oracle.com/javase/tutorial
 
 Classes are composed of instance fields, methods and constructors. Instance fields hold local state for the instantiated class. Methods are functions that can be called from the instantiated class and constructors are special methods that are used to instantiate an instance of the class.
 
-Each of these elements can include modifiers for controlling encapsulation, which means to control whether the given element can be used from outside the instance of the class or not. Using the `public` modifier on instance fields, methods and constructors allows access from outside the instantiated class, whereas the `private` modifier limits access to inside the instance only. There are a number of other modifiers available in**C#**and**Java**but I won’t through all of them and how they work at this moment.
+Each of these elements can include modifiers for controlling encapsulation, which means to control whether the given element can be used from outside the instance of the class or not. Using the `public` modifier on instance fields, methods and constructors allows access from outside the instantiated class, whereas the `private` modifier limits access to inside the instance only. There are a number of other modifiers available in **C#** and **Java** but I won’t through all of them and how they work at this moment.
 
 One use for encapsulation is to hide implementation details that are not relevant to the code consuming the instantiated class. Encapsulation is also an important component for managing mutability, which means controlling and preventing the change of state within class instances.
 
 # Typescript 
 
-Let’s consider a simple example written for of a class implemented in**TypeScript**;
+Let’s consider a simple example written for of a class implemented in **TypeScript**;
 
 ```plain text
 class Bicycle {
@@ -51,11 +51,11 @@ class Bicycle {
 }
 ```
 
-**TypeScript**borrows the `private` keyword from**C#**and**Java**. This sets an expectation that the `property1` and `property2` fields on instances of this class are not accessible from outside of the instance.
+**TypeScript** borrows the `private` keyword from **C#** and **Java**. This sets an expectation that the `property1` and `property2` fields on instances of this class are not accessible from outside of the instance.
 
-This example also features the `readonly` keyword which is borrowed from**C#**, with the**Java**equivalent being the `final` keyword. This modifier prevents the value contained in this field from being mutated.
+This example also features the `readonly` keyword which is borrowed from **C#**, with the **Java** equivalent being the `final` keyword. This modifier prevents the value contained in this field from being mutated.
 
-Below is an example for the equivalent class written in**Java;**
+Below is an example for the equivalent class written in **Java;**
 
 ```plain text
 class Bicycle {
@@ -82,7 +82,7 @@ class Bicycle {
 }
 ```
 
-Combining these keywords produces an expectation whereby properties on instances of this class can only be accessed internally and cannot be mutated. Unfortunately with**TypeScript**this is not actually the case.
+Combining these keywords produces an expectation whereby properties on instances of this class can only be accessed internally and cannot be mutated. Unfortunately with **TypeScript** this is not actually the case.
 
 ## Mutability
 
@@ -112,11 +112,11 @@ console.log(person);
 // Person { id: 234, firstName: 'Alex', lastName: 'Smith'}
 ```
 
-The immutability offered by**TypeScript’s**`readonly` keyword is only maintained as long as you’re referring to the concrete implementation of a class. This is a potentially hazardous violation of the assumptions set by borrowing the `readonly` keyword from**C#**, which is meant to share a similar purpose.
+The immutability offered by **TypeScript’s** `readonly` keyword is only maintained as long as you’re referring to the concrete implementation of a class. This is a potentially hazardous violation of the assumptions set by borrowing the `readonly` keyword from **C#**, which is meant to share a similar purpose.
 
 ### A Java Example
 
-Consider the example below of the equivalent code expressed in**Java**;
+Consider the example below of the equivalent code expressed in **Java**;
 
 ```plain text
 public class Mutability {
@@ -155,13 +155,13 @@ public class Person implements HasIdentity {
 // error: compilation failed
 ```
 
-In**Java**, interface attributes are `public static final` by default, meaning that attempting to access and mutate the instance field in this way results in a compilation error.
+In **Java**, interface attributes are `public static final` by default, meaning that attempting to access and mutate the instance field in this way results in a compilation error.
 
-Luckily there are a few options available to implement immutability in**TypeScript**classes.
+Luckily there are a few options available to implement immutability in **TypeScript** classes.
 
 ### Getters
 
-**JavaScript**natively supports a feature called**Getters**, which enable control over the mutability of instance fields in classes. In the example below, we can internalise the instance fields and allow readonly access to them by implementing**Getters**;
+**JavaScript** natively supports a feature called **Getters**, which enable control over the mutability of instance fields in classes. In the example below, we can internalise the instance fields and allow readonly access to them by implementing **Getters**;
 
 ```plain text
 interface HasIdentity {
@@ -201,7 +201,7 @@ console.log(person);
 
 ### Object.freeze()
 
-Similarly, the `Object.freeze()` method prevents extensions and makes existing properties on any object in**JavaScript**non-writeable and non-configurable. A frozen object can no longer be changed: new properties cannot be added, existing properties cannot be removed, their enumerability, configurability, writability, or value cannot be changed, and the object's prototype cannot be re-assigned. Consider the example below which produces a similar error to the one in the**Getters**example;
+Similarly, the `Object.freeze()` method prevents extensions and makes existing properties on any object in **JavaScript** non-writeable and non-configurable. A frozen object can no longer be changed: new properties cannot be added, existing properties cannot be removed, their enumerability, configurability, writability, or value cannot be changed, and the object's prototype cannot be re-assigned. Consider the example below which produces a similar error to the one in the **Getters** example;
 
 ```plain text
 interface HasIdentity {
@@ -251,7 +251,7 @@ console.log(book);
 // Book { author: '2001: A Space Odyssey', title: 'Author C. Clarke' }
 ```
 
-**TypeScript’s**`private` keyword is only relevant at compile-time and is subverted just about as easily as the `readonly` keyword. In another example below, we see that libraries like**Jest**default to determining whether two classes are equal by comparing each of the instance fields, again ignoring the `private` modifier;
+**TypeScript’s** `private` keyword is only relevant at compile-time and is subverted just about as easily as the `readonly` keyword. In another example below, we see that libraries like **Jest** default to determining whether two classes are equal by comparing each of the instance fields, again ignoring the `private` modifier;
 
 ```plain text
 class Book {
@@ -297,7 +297,7 @@ describe(`given one instance of Book`, () => {
 });
 ```
 
-**Jest’s**[`.toEqual(value)`](https://jestjs.io/docs/expect#toequalvalue) method iterates through each of the properties on the expected and received inputs and ensure they are equal. The [`.toStrictEqual(value)`](https://jestjs.io/docs/expect#tostrictequalvalue) method also checks inputs both have the same type. Running these tests in**Jest**produces the following test output where a number of the assertions fail;
+**Jest’s** [`.toEqual(value)`](https://jestjs.io/docs/expect#toequalvalue) method iterates through each of the properties on the expected and received inputs and ensure they are equal. The [`.toStrictEqual(value)`](https://jestjs.io/docs/expect#tostrictequalvalue) method also checks inputs both have the same type. Running these tests in **Jest** produces the following test output where a number of the assertions fail;
 
 ![](/images/classes-in-typescript-img-1.png)
 
@@ -305,7 +305,7 @@ Again, luckily there are options available to ensure our classes are properly en
 
 ### JavaScript Private Fields
 
-**JavaScript**natively implements `private` functionality to any field prefixed with a hash `#`. See in the example below where the `author` and `title` properties are successfully hidden.
+**JavaScript** natively implements `private` functionality to any field prefixed with a hash `#`. See in the example below where the `author` and `title` properties are successfully hidden.
 
 ```plain text
 class Book {
@@ -360,7 +360,7 @@ class Book {
 
 > ℹ️ This trick is lifted from the [Java Object class](https://docs.oracle.com/en/java/javase/18/docs/api/java.base/java/lang/Object.html#equals(java.lang.Object)), which specifies implementation of an `.equals(Object obj)` method for comparing objects to one another.
 
-Then the tests are updated to use the `.equals()` method, replacing any usage of**Jest’s**`.toEqual(value)` or `.toStrictEquals(value)` matchers.
+Then the tests are updated to use the `.equals()` method, replacing any usage of **Jest’s** `.toEqual(value)` or `.toStrictEquals(value)` matchers.
 
 ```plain text
 describe(`given one instance of Book`, () => {
@@ -400,15 +400,15 @@ Resulting in the following output where all the tests pass;
 
 # Understand your tools
 
-Based on the above, you may assume my recommendation is not to use**TypeScript**classes.
+Based on the above, you may assume my recommendation is not to use **TypeScript** classes.
 
-Moving from strongly-typed OOP languages like**C#**or**Java**to**TypeScript**requires a paradigm shift. The presence of familiar APIs borrowed from popular OOP languages such as `private` and `readonly` is troubling because it does little to address this paradigm shift. More than likely it allows newcomers to ignore it long enough to run into serious problems.
+Moving from strongly-typed OOP languages like **C#** or **Java** to **TypeScript** requires a paradigm shift. The presence of familiar APIs borrowed from popular OOP languages such as `private` and `readonly` is troubling because it does little to address this paradigm shift. More than likely it allows newcomers to ignore it long enough to run into serious problems.
 
-I recommend avoiding**TypeScript’s**`private` and `readonly` APIs if you want to ensure your classes are immutable and encapsulated. Lean on**Getters**for immutability, and**JavaScript’s**native private class modifiers or ES modules for encapsulation. Additionally, opt for explicit equality comparison rather than**Jest’s**`.toEqual(value)` or `.toStrictEquals(value)` matchers which compare structure.
+I recommend avoiding **TypeScript’s** `private` and `readonly` APIs if you want to ensure your classes are immutable and encapsulated. Lean on **Getters** for immutability, and **JavaScript’s** native private class modifiers or ES modules for encapsulation. Additionally, opt for explicit equality comparison rather than **Jest’s** `.toEqual(value)` or `.toStrictEquals(value)` matchers which compare structure.
 
-I personally prefer not to use classes altogether as a forcing function for maintaining this paradigm shift. When I am writing in**TypeScript**, having it feel different to when I use**C#**or**Java**helps me avoid falling into traps.
+I personally prefer not to use classes altogether as a forcing function for maintaining this paradigm shift. When I am writing in **TypeScript**, having it feel different to when I use **C#** or **Java** helps me avoid falling into traps.
 
-The only recommendation I will make is to take the time to learn and understand the tools you are working with.**TypeScript**has many more quirks than I have highlighted, and no language is perfect!
+The only recommendation I will make is to take the time to learn and understand the tools you are working with. **TypeScript** has many more quirks than I have highlighted, and no language is perfect!
 
 # References
 
