@@ -1,0 +1,551 @@
+---
+title: "Immutability in Go"
+slug: "immutability-in-go"
+date: "2024-04-24"
+hero: "/images/immutability-in-go-hero.jpg"
+description: "_24th April 2024 · 12 minute read_"
+type: "post"
+---
+
+
+> Go doesn't have immutable structs. In fact, Go doesn't have a lot of things you might expect from languages like **Java** or **C#**. This post walks through building an immutable struct in Go from scratch, borrowing patterns from other languages and questioning whether it was worth it along the way.
+
+# Context
+
+Most of my earliest professional experience is working with OOP languages such as **C#** and **Java**, although I have been in the tech industry long enough to have used many popular languages in earnest in the last 10 years.
+
+More recently I have been working with **Go** for around a year, coming from that OOP background. I've noticed some things that feel missing — safety nets that **C#** and **Java** provide out of the box that simply don't exist in **Go**.
+
+Do I know everything about **Go**? Hard no. But I know enough to be dangerous, and I know enough to miss some of the guardrails other languages offer.
+
+> ℹ️ This post is based on a talk I gave in April 2024. The code examples build on each other incrementally, so I'd recommend reading from start to finish.
+
+# Mutable
+
+A value is **mutable** when the data stored at a memory address is modified directly without reallocation. In **Go**, slices, arrays, maps and channels are mutable.
+
+```go
+func main() {
+    a := []int{1, 2, 3}
+    b := a
+    fmt.Printf("a[1] -> %p\n", &a[1])
+    fmt.Printf("b[1] -> %p\n", &b[1])
+    b[1] = 4
+    fmt.Println("a = ", a)
+    fmt.Println("b = ", b)
+}
+
+// Output:
+// a[1] -> 0xc000012028
+// b[1] -> 0xc000012028   ← same address
+// a =  [1 4 3]
+// b =  [1 4 3]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/_8UQsFYuiSo)
+
+When `b` is assigned from `a`, both variables point to the same underlying array in memory. Mutating `b[1]` changes `a[1]` too — they share the same address.
+
+# Immutable
+
+A value is **immutable** when any change results in a reallocation of memory. In **Go**, booleans, ints, floats, pointers, strings and interfaces are immutable.
+
+```go
+func main() {
+    a := true
+    b := a
+    fmt.Printf("a -> %p\n", &a)
+    fmt.Printf("b -> %p\n", &b)
+
+    b = false
+    fmt.Println("a = ", a)
+    fmt.Println("b = ", b)
+}
+
+// Output:
+// a -> 0xc000010082
+// b -> 0xc000010083   ← different address
+// a =  true
+// b =  false
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/VCC2-VhOGDU)
+
+Here, `a` and `b` occupy different addresses in memory. Changing `b` has no effect on `a`. This is the behaviour you'd expect from a value type.
+
+# What About Structs?
+
+This is where things get interesting. Structs in **Go** are a composition of fields, and those fields can be a mix of mutable and immutable types.
+
+```go
+type MyStruct struct {
+    R int
+    S []int
+}
+
+func main() {
+    a := MyStruct{1, []int{1, 2, 3}}
+    b := a
+    fmt.Printf("a.R    -> %p\n", &a.R)
+    fmt.Printf("b.R    -> %p\n", &b.R)
+    fmt.Printf("a.S[1] -> %p\n", &a.S[1])
+    fmt.Printf("b.S[1] -> %p\n", &b.S[1])
+    b.R = 2
+    b.S[1] = 4
+    fmt.Println("a = ", a)
+    fmt.Println("b = ", b)
+}
+
+// Output:
+// a.R    -> 0xc000078080
+// b.R    -> 0xc0000780a0   ← different address
+// a.S[1] -> 0xc0000160f8
+// b.S[1] -> 0xc0000160f8   ← same address
+// a =  {1 [1 4 3]}
+// b =  {2 [1 4 3]}
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/3pgrT-al1yW)
+
+The `int` field `R` is copied by value — `a.R` and `b.R` have different memory addresses. But the `[]int` field `S` is a slice, which means `a.S` and `b.S` point to the same underlying array. Mutating `b.S[1]` also mutates `a.S[1]`.
+
+This is the crux of the problem. Structs in **Go** behave as both mutable and immutable depending on what they contain.
+
+# Pass by Value vs. Pass by Reference
+
+This mixed behaviour becomes especially important when passing structs to functions.
+
+```go
+func passByValue(val MyStruct) {
+    val.R = 2
+    val.S[1] = 4
+}
+
+func passByReference(val *MyStruct) {
+    val.R = 2
+    val.S[1] = 4
+}
+
+func main() {
+    a := MyStruct{1, []int{1, 2, 3}}
+
+    passByValue(a)
+    fmt.Println("a = ", a)
+
+    passByReference(&a)
+    fmt.Println("a = ", a)
+}
+
+// Output:
+// a =  {1 [1 4 3]}
+// a =  {2 [1 4 3]}
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/H-bIKkzAy8R)
+
+When passed by value, `R` is safe — it's copied. But `S` is still a slice, and `S[1]` gets mutated regardless of whether the struct is passed by value or reference. When passed by reference, both `R` and `S` are mutated.
+
+# Why Would You Want an Immutable Struct?
+
+There are a few compelling reasons:
+
+- **Prevent bugs**: Be confident that the state of your data remains unchanged after passing it around.
+- **Concurrent thread-safety**: When a struct is passed by reference — and you don't know how people will use your code — immutability prevents race conditions.
+- **Undo and redo functionality**: Simply revert to a previous version of the struct.
+
+# How Other Languages Handle This
+
+Before we start building, it's worth looking at how other languages solve this problem. Each of these has first-class language support for immutability — something **Go** deliberately omits.
+
+## Java
+
+If you've worked with **Java**, you'll know the `final` keyword. Combine it with private fields and you have an immutable class out of the box.
+
+```java
+class Bicycle {
+    private final int cadence;
+    private final int speed;
+    private final int gear;
+
+    public Bicycle(final int cadence, final int speed, final int gear) {
+        this.cadence = cadence;
+        this.speed = speed;
+        this.gear = gear;
+    }
+}
+```
+
+The `final` keyword prevents reassignment of a field after construction. Combine this with `private` access modifiers and you have a class whose state cannot be changed from the outside. The compiler enforces this — attempting to reassign a `final` field results in a compilation error.
+
+## C\#
+
+In **C#**, the `readonly` keyword serves a similar purpose. Fields marked as `readonly` can only be assigned during construction.
+
+```csharp
+class Bicycle
+{
+    public int Cadence { get; }
+    public int Speed { get; }
+    public int Gear { get; }
+
+    public Bicycle(int cadence, int speed, int gear)
+    {
+        Cadence = cadence;
+        Speed = speed;
+        Gear = gear;
+    }
+}
+```
+
+Get-only properties without a setter are effectively immutable. **C#** also offers `record` types and `init`-only setters for even more concise immutable data structures.
+
+## JavaScript
+
+**JavaScript** provides `Object.freeze()`, which prevents any modification to an object's properties at runtime.
+
+```javascript
+const bicycle = Object.freeze({
+    cadence: 0,
+    speed: 0,
+    gear: 1,
+});
+
+bicycle.cadence = 10;
+console.log(bicycle.cadence); // 0
+```
+
+Attempting to modify a frozen object silently fails in non-strict mode, or throws a `TypeError` in strict mode. It's worth noting that `Object.freeze()` is shallow — nested objects still need to be frozen individually.
+
+## TypeScript
+
+**TypeScript** extends **JavaScript** with the `Readonly<T>` utility type, which makes all properties on a type read-only at compile time.
+
+```typescript
+interface Bicycle {
+    cadence: number;
+    speed: number;
+    gear: number;
+}
+
+const bicycle: Readonly<Bicycle> = {
+    cadence: 0,
+    speed: 0,
+    gear: 1,
+};
+
+bicycle.cadence = 10; // Compile error
+```
+
+This is a compile-time check only — it won't prevent mutation at runtime. I've written in more detail about the limitations of **TypeScript's** approach to immutability in my post on [classes in TypeScript](/posts/classes-in-typescript).
+
+## And Then There's Go
+
+**Go** doesn't have any of these. There is no `final`, no `readonly`, no `freeze`, no `Readonly<T>`. If you want immutability, you have to build it yourself.
+
+# Building an Immutable Struct
+
+Let's build one from scratch, step by step.
+
+## A Basic Constructor
+
+Start with a simple struct and a constructor function.
+
+```go
+type MyStruct struct {
+    R int
+    S []int
+}
+
+func New(r int, s []int) MyStruct {
+    return MyStruct{r, s}
+}
+
+func main() {
+    fmt.Println(New(1, []int{1, 2, 3}))
+}
+
+// Output:
+// {1 [1 2 3]}
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/VHjwRnI-dpQ)
+
+Nothing special here. The fields are exported, which means anyone can read and write to them directly. We need to fix that.
+
+## Private Fields with Getters
+
+Make the fields unexported (lowercase) and expose them through getter methods.
+
+```go
+type MyStruct struct {
+    r int
+    s []int
+}
+
+func New(r int, s []int) MyStruct {
+    return MyStruct{r, s}
+}
+
+func (a MyStruct) GetR() int   { return a.r }
+func (a MyStruct) GetS() []int { return a.s }
+
+func main() {
+    a := New(1, []int{1, 2, 3})
+    fmt.Println(a.GetR(), a.GetS())
+    s := a.GetS()
+    s[1] = 4
+    fmt.Println(a.GetR(), a.GetS())
+}
+
+// Output:
+// 1 [1 2 3]
+// 1 [1 4 3]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/mThAaHrURQu)
+
+The `int` field is safe — but `GetS()` returns a reference to the underlying slice. The caller can still manipulate the data. We're not done yet.
+
+## Deep Copy the Slice
+
+One option is to copy the entire slice every time it's accessed.
+
+```go
+func (a MyStruct) GetS() []int {
+    new := make([]int, len(a.s))
+    copy(new, a.s) // expensive!
+    return new
+}
+
+func main() {
+    a := New(1, []int{1, 2, 3})
+    fmt.Println(a.GetR(), a.GetS())
+    s := a.GetS()
+    s[1] = 4
+    fmt.Println(a.GetR(), a.GetS())
+}
+
+// Output:
+// 1 [1 2 3]
+// 1 [1 2 3]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/QozKCclXM4q)
+
+This works — the caller can no longer mutate the internal state. But it's expensive. Every call to `GetS()` allocates a new slice and copies all the data. For large slices, this is slow.
+
+## Return Elements by Index
+
+Do we actually need to copy the entire slice? Function returns are passed by value, so returning individual elements is safe.
+
+```go
+func (a MyStruct) GetSAtIndex(index int) int {
+    new := a.s[index]
+    return new
+}
+
+func main() {
+    a := New(1, []int{1, 2, 3})
+    fmt.Println(a.GetR(), a.GetSAtIndex(1))
+    s := a.GetSAtIndex(1)
+    s = 4
+    fmt.Println(a.GetR(), a.GetSAtIndex(1), s)
+}
+
+// Output:
+// 1 2
+// 1 2 4
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/OIeqbAJwEZY)
+
+Now the caller gets back an `int` — an immutable value. The local variable `s` can be reassigned all it wants, but the internal state of the struct is untouched.
+
+## A Quick Rant About Struct Initialisation
+
+Before we continue, I need to address something that bothers me.
+
+```go
+type MyStruct struct {
+    R int
+    S []int
+}
+
+func New(r int, s []int) MyStruct {
+    return MyStruct{r, s}
+}
+
+func main() {
+    a := MyStruct{}
+
+    fmt.Println("a.R = ", a.R)
+    fmt.Println("a.S[1] = ", a.S[1])
+}
+
+// Output:
+// a.R =  0
+// panic: runtime error: index out of range [1] with length 0
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/T8pSsLWmXFY)
+
+Why does **Go** let me do this? The default zero-value initialiser completely bypasses the constructor. All the effort we've put into controlling initialisation through `New()` can be sidestepped by anyone who decides to use `MyStruct{}` directly. This will panic at runtime when trying to access `a.S[1]` on a nil slice.
+
+## Export an Interface, Hide the Struct
+
+The solution is to make the struct itself unexported and expose an interface instead.
+
+```go
+type myStruct struct {
+    r int
+    s []int
+}
+
+type MyStruct interface {
+    GetR() int
+    GetSAtIndex(index int) int
+}
+
+func New(r int, s []int) myStruct {
+    return myStruct{r, s}
+}
+
+func (a myStruct) GetR() int { return a.r }
+
+func (a myStruct) GetSAtIndex(index int) int {
+    new := a.s[index]
+    return new
+}
+
+func main() {
+    a := New(1, []int{1, 2, 3})
+    fmt.Println(a.GetR(), a.GetSAtIndex(1))
+}
+
+// Output:
+// 1 2
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/dANL6lYirnr)
+
+Now consumers interact with the `MyStruct` interface. The underlying `myStruct` is unexported, so it cannot be directly instantiated from outside the package. The default initialiser is no longer a concern.
+
+## Serialisation — Marshalling
+
+Private fields in **Go** won't serialise by default because the `encoding/json` package only marshals exported fields. We need to implement `MarshalJSON()` using an auxiliary struct with exported fields and JSON tags.
+
+```go
+type aux struct {
+    R int   `json:"r"`
+    S []int `json:"s"`
+}
+
+func (a myStruct) MarshalJSON() ([]byte, error) {
+    return json.Marshal(&aux{a.r, a.s})
+}
+
+func main() {
+    a := New(1, []int{1, 2, 3})
+    b, _ := json.Marshal(a)
+    fmt.Println(string(b))
+}
+
+// Output:
+// {"r":1,"s":[1,2,3]}
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/Z27l62FVipN)
+
+The `aux` struct acts as a bridge between the private fields and the JSON encoder, allowing us to control the serialisation output while keeping the actual struct fields private.
+
+## Serialisation — Unmarshalling
+
+Similarly, we need to implement `UnmarshalJSON()` to deserialise back into our struct.
+
+```go
+func (a *myStruct) UnmarshalJSON(data []byte) error {
+    aux := &aux{}
+    if err := json.Unmarshal(data, &aux); err != nil {
+        return err
+    }
+    a.r = aux.R
+    a.s = aux.S
+    return nil
+}
+
+func main() {
+    var c myStruct
+    _ = json.Unmarshal([]byte(`{"r":1,"s":[1,2,3]}`), &c)
+    fmt.Println(c.GetR(), c.GetSAtIndex(1))
+}
+
+// Output:
+// 1 2
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/iatwOB2KxBD)
+
+> ℹ️ Note that `UnmarshalJSON` requires a pointer receiver. This is necessary because the method needs to modify the struct's fields during deserialisation.
+
+## Equality
+
+Lastly, for comparing two instances we can steal a trick from **Java** and implement an `Equals()` method.
+
+```go
+func (a myStruct) Equals(c myStruct) bool {
+    equals := a.r == c.r && len(a.s) == len(c.s)
+    if equals {
+        for i := range a.s {
+            equals = equals && a.s[i] == c.s[i]
+        }
+    }
+    return equals
+}
+
+func main() {
+    a := New(1, []int{1, 2, 3})
+    b := New(1, []int{1, 2, 3})
+    fmt.Println("a equals b ", a.Equals(b))
+
+    c := New(1, []int{1, 4, 3})
+    fmt.Println("a equals c ", a.Equals(c))
+}
+
+// Output:
+// a equals b  true
+// a equals c  false
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/yA-C_v5fWup)
+
+> ℹ️ This pattern is borrowed from the [Java Object class](https://docs.oracle.com/en/java/javase/18/docs/api/java.base/java/lang/Object.html#equals(java.lang.Object)), which specifies an `.equals(Object obj)` method for comparing objects. If this looks familiar, it's because I used the same trick in my post on [classes in TypeScript](/posts/classes-in-typescript).
+
+# The Final Output
+
+That's 66 lines of code nobody asked for.
+
+What we've built is a struct that is:
+
+- Unexported, with an exported interface for consumers
+- Initialised exclusively through a constructor
+- Immutable — fields cannot be read or written directly
+- Serialisable via custom JSON marshal/unmarshal methods
+- Comparable via an explicit `Equals()` method
+
+# Is This Worth It?
+
+The reasons for doing this are sound. Preventing bugs, concurrent thread-safety, and the confidence that your data won't be changed out from under you — these aren't theoretical concerns. If you're building a library or package that other developers will consume, you genuinely don't know how they'll use your code. Immutability is a strong defence.
+
+But it does make **Go** feel a lot like **Java** or **C#**. And that might be missing the point. **Go** is deliberately simple. It omits features that other languages take for granted because it values clarity and simplicity over cleverness. Adding 66 lines of boilerplate to achieve something that would be a single keyword in another language is, at best, a code smell.
+
+My recommendation is the same one I gave in my post about [classes in TypeScript](/posts/classes-in-typescript) — **understand your tools**. If you're writing a shared library where immutability matters, this pattern has merit. If you're writing application code in a small team, it's probably overkill. The only recommendation I will make is to take the time to learn and understand the language you are working with, and apply these patterns deliberately rather than by default.
+
+# References
+
+[Slide Deck — GitHub](https://github.com/Macca2805/go-immutability-talk)
+
+[Effective Go — The Go Programming Language](https://go.dev/doc/effective_go)
+
+[JSON and Go — The Go Blog](https://go.dev/blog/json)
+
+[Java Object.equals() Documentation](https://docs.oracle.com/en/java/javase/18/docs/api/java.base/java/lang/Object.html#equals(java.lang.Object))

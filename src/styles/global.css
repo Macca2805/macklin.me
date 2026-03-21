@@ -557,6 +557,16 @@ body {
   margin-bottom: 0;
 }
 
+@media (min-width: 641px) {
+  .article-hero {
+    max-height: 900px;
+  }
+
+  .hero-banner {
+    height: 420px;
+  }
+}
+
 @media (max-width: 640px) {
   .hero-section {
     /* 100vw approach handles mobile automatically */
