@@ -236,7 +236,7 @@ const bicycle: Readonly<Bicycle> = {
 bicycle.cadence = 10; // Compile error
 ```
 
-This is a compile-time check only — it won't prevent mutation at runtime. I've written in more detail about the limitations of **TypeScript's** approach to immutability in my post on [classes in TypeScript](/posts/classes-in-typescript).
+This is a compile-time check only — it won't prevent mutation at runtime. I've written in more detail about the limitations of **TypeScript's** approach to immutability in my post on [classes in TypeScript](/classes-in-typescript).
 
 ## And Then There's Go
 
@@ -518,7 +518,7 @@ func main() {
 
 [Run in Go Playground ↗](https://go.dev/play/p/yA-C_v5fWup)
 
-> ℹ️ This pattern is borrowed from the [Java Object class](https://docs.oracle.com/en/java/javase/18/docs/api/java.base/java/lang/Object.html#equals(java.lang.Object)), which specifies an `.equals(Object obj)` method for comparing objects. If this looks familiar, it's because I used the same trick in my post on [classes in TypeScript](/posts/classes-in-typescript).
+> ℹ️ This pattern is borrowed from the [Java Object class](https://docs.oracle.com/en/java/javase/18/docs/api/java.base/java/lang/Object.html#equals(java.lang.Object)), which specifies an `.equals(Object obj)` method for comparing objects. If this looks familiar, it's because I used the same trick in my post on [classes in TypeScript](/classes-in-typescript).
 
 # The Final Output
 
@@ -538,7 +538,7 @@ The reasons for doing this are sound. Preventing bugs, concurrent thread-safety,
 
 But it does make **Go** feel a lot like **Java** or **C#**. And that might be missing the point. **Go** is deliberately simple. It omits features that other languages take for granted because it values clarity and simplicity over cleverness. Adding 66 lines of boilerplate to achieve something that would be a single keyword in another language is, at best, a code smell.
 
-My recommendation is the same one I gave in my post about [classes in TypeScript](/posts/classes-in-typescript) — **understand your tools**. If you're writing a shared library where immutability matters, this pattern has merit. If you're writing application code in a small team, it's probably overkill. The only recommendation I will make is to take the time to learn and understand the language you are working with, and apply these patterns deliberately rather than by default.
+My recommendation is the same one I gave in my post about [classes in TypeScript](/classes-in-typescript) — **understand your tools**. If you're writing a shared library where immutability matters, this pattern has merit. If you're writing application code in a small team, it's probably overkill. The only recommendation I will make is to take the time to learn and understand the language you are working with, and apply these patterns deliberately rather than by default.
 
 # References
 
