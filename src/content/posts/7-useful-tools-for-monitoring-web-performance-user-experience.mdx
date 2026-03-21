@@ -100,15 +100,13 @@ Based on **Lighthouse**, I primarily use this tool if I want to run a test in th
 
 ![](/images/7-useful-tools-for-monitoring-web-performance-user-experience-img-8.png)
 
-Data sourced from real-world user traffic will always be more valuable that data from one-off tests that run inside a vacuum.** **The** CrUX Dashboard **is built from data aggregated from real-world user traffic reported by the Google Chrome browser.
+Data sourced from real-world user traffic will always be more valuable that data from one-off tests that run inside a vacuum.** **The** CrUX Dashboard**is built from data aggregated from real-world user traffic reported by the Google Chrome browser.
 
 Google Chrome records, anonymises and aggregates data from real users and makes that data available at the end of the month in a free report. This report provides an excellent way to visualise performance trends over longer periods of time, although it does come with the downside of having a much longer feedback loop.
 
-> ✅** Upsides:
-**Based on aggregated data from real user traffic, rather than emulated environments. Also completely free.
+> ✅ **Upsides:** Based on aggregated data from real user traffic, rather than emulated environments. Also completely free.
 
-> ⛔** Drawbacks:
-**The feedback loop is very slow - results are monthly and are made available nearly two weeks after the end of the month. Only captures data from Google Chrome.
+> ⛔ **Drawbacks:** The feedback loop is very slow - results are monthly and are made available nearly two weeks after the end of the month. Only captures data from Google Chrome.
 
 ## Next.js Analytics
 
@@ -118,11 +116,9 @@ Google Chrome records, anonymises and aggregates data from real users and makes 
 
 If you're using **Next.js** and **Vercel**, you can setup **Next.js Analytics**- a tool that utilizes real-world user traffic to provide their own "Real Experience Score". Unlike the CrUX report, **Vercel** aggregates and reports this data back to you with a much shorter feedback loop.
 
-> ✅** Upsides:
-**Based on aggregated data from real user traffic, rather than emulated environments. Super-easy to set up if you're already running on** Next.js **and** Vercel **.
+> ✅ **Upsides:** Based on aggregated data from real user traffic, rather than emulated environments. Super-easy to set up if you're already running on **Next.js** and **Vercel**.
 
-> ⛔** Drawbacks:
-**Only supports the** Next.js **framework and is trickier to setup if you're not using** Vercel **.
+> ⛔ **Drawbacks:** Only supports the **Next.js** framework and is trickier to setup if you're not using **Vercel**.
 
 ## Web Vitals
 
@@ -132,11 +128,9 @@ If you're using **Next.js** and **Vercel**, you can setup **Next.js Analytics**-
 
 Lastly the most advanced option, the **web-vitals** javascript library. Using this option will give you more flexibility to use your preferred frameworks and other tools, but requires far more additional work to set up (if you do a bit of digging, you'll find that **Next.js Analytics** is using this library under-the-hood).
 
-> ✅** Upsides:
-**Flexibility - allows you to set up your own web performance tracking with any framework and using your own tooling.
+> ✅ **Upsides:** Flexibility - allows you to set up your own web performance tracking with any framework and using your own tooling.
 
-> ⛔** Drawbacks:
-**This tool is not wholistic, it needs to be paired with additional software in order to record the metrics over time or produce dashboards. Also, not all browsers support the metrics.
+> ⛔ **Drawbacks:** This tool is not wholistic, it needs to be paired with additional software in order to record the metrics over time or produce dashboards. Also, not all browsers support the metrics.
 
 # Additional Resources
 
