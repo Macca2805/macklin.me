@@ -63,6 +63,8 @@ const experience = [
     </div>
   </div>
 
+  <h1 class="home-name">Macklin Hartley</h1>
+
   <div class="home-bio">
     <p>I work with organisations to turn ideas into resilient software by aligning clear goals with thoughtful architecture, lightweight processes and supportive teams. My focus is on understanding how information flows through a system, weighing trade-offs against the right capabilities and untangling the social and technical constraints that often decide a project's success.</p>
     <p>As generative AI accelerates routine coding, I help teams climb the abstraction ladder, using AI as leverage while we concentrate on problem framing, capability design and continuous learning. I thrive in small, autonomous teams that value outcomes over outputs, and I'm most motivated when solving meaningful problems alongside people I respect and admire.</p>
@@ -90,7 +92,7 @@ const experience = [
   <ul class="content-list">
     {talks.map(talk => (
       <li class="content-list-item">
-        <a href={`/talks/${talk.data.slug}`}>
+        <a href={`/${talk.data.slug}`}>
           <span class="item-icon">🗣️</span>
           {talk.data.title}
         </a>
@@ -99,7 +101,7 @@ const experience = [
     ))}
   </ul>
 
-  <h2 class="section-heading">Certifications</h2>
+  <h2 class="section-heading">Certification</h2>
   <div class="certs-grid">
     {certifications.map(cert => (
       <div class="cert-item">

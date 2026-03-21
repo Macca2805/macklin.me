@@ -4,34 +4,80 @@ import { getCollection, render } from 'astro:content';
 
 export async function getStaticPaths() {
   const posts = await getCollection('posts');
-  return posts.map(post => ({
+  const talks = await getCollection('talks');
+  
+  const postPaths = posts.map(post => ({
     params: { slug: post.data.slug },
-    props: { post },
+    props: { entry: post, collection: 'posts' },
   }));
+  
+  const talkPaths = talks.map(talk => ({
+    params: { slug: talk.data.slug },
+    props: { entry: talk, collection: 'talks' },
+  }));
+  
+  return [...postPaths, ...talkPaths];
 }
 
-const { post } = Astro.props;
-const { Content } = await render(post);
+const { entry, collection } = Astro.props;
+const { Content } = await render(entry);
+const isTalk = collection === 'talks';
 
-function formatDate(dateStr: string) {
+function ordinalSuffix(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
-  return d.toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' });
+  const day = ordinalSuffix(d.getDate());
+  const month = d.toLocaleDateString('en-AU', { month: 'short' });
+  const year = d.getFullYear();
+  return `${day} ${month} ${year}`;
 }
+
+function calcReadTime(body: string): string {
+  const words = body.trim().split(/\s+/).length;
+  const minutes = Math.max(1, Math.round(words / 200));
+  return `${minutes} minute read`;
+}
+
+const readTime = !isTalk ? calcReadTime(entry.body ?? '') : null;
+const metaLine = isTalk
+  ? formatDate(entry.data.date)
+  : `${formatDate(entry.data.date)} · ${readTime}`;
 ---
 <BaseLayout 
-  title={`${post.data.title} — Macklin Hartley`}
-  description={post.data.description}
-  image={post.data.hero}
+  title={`${entry.data.title} — Macklin Hartley`}
+  description={entry.data.description}
+  image={entry.data.hero}
 >
-  {post.data.hero && (
-    <img src={post.data.hero} alt="" class="article-hero" />
+  {!isTalk && entry.data.hero && (
+    <img src={entry.data.hero} alt="" class="article-hero" />
   )}
   <a href="/" class="back-link">← Back</a>
-  <div class="article-header">
-    <h1 class="article-title">{post.data.title}</h1>
-    <p class="article-meta">{formatDate(post.data.date)}</p>
-  </div>
-  <div class="article-body">
-    <Content />
-  </div>
+
+  {isTalk ? (
+    <div class="talk-page">
+      <div class="talk-icon">🗣️</div>
+      <div class="article-header">
+        <h1 class="article-title">{entry.data.title}</h1>
+        <p class="article-meta"><em>{metaLine}</em></p>
+      </div>
+      <div class="article-body">
+        <Content />
+      </div>
+    </div>
+  ) : (
+    <>
+      <div class="article-header">
+        <h1 class="article-title">{entry.data.title}</h1>
+        <p class="article-meta"><em>{metaLine}</em></p>
+      </div>
+      <div class="article-body">
+        <Content />
+      </div>
+    </>
+  )}
 </BaseLayout>
