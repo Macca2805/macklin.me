@@ -1,0 +1,116 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+
+const posts = (await getCollection('posts')).sort((a, b) => 
+  new Date(b.data.date).getTime() - new Date(a.data.date).getTime()
+);
+const talks = (await getCollection('talks')).sort((a, b) => 
+  new Date(b.data.date).getTime() - new Date(a.data.date).getTime()
+);
+
+function formatDate(dateStr: string) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-AU', { year: 'numeric', month: 'short' });
+}
+
+const certifications = [
+  { image: '/images/cert-1.png', name: 'AWS Certified Solutions Architect – Associate' },
+  { image: '/images/cert-2.png', name: 'AWS Certified Developer – Associate' },
+  { image: '/images/cert-3.png', name: 'AWS Certified SysOps Administrator – Associate' },
+  { image: '/images/cert-4.png', name: 'Terraform Certified Associate' },
+  { image: '/images/cert-5.png', name: 'Snowflake Hands On Essentials – Data Warehouse' },
+  { image: '/images/cert-6.png', name: 'Certified Kubernetes Application Developer' },
+];
+
+const experience = [
+  {
+    logo: '/images/exp-logo-7.png',
+    company: 'WeMoney',
+    roles: 'Principal Engineer (May 2023 – Present)',
+  },
+  {
+    logo: '/images/exp-logo-8.png',
+    company: 'VGW',
+    roles: 'Engineering Manager (March 2021 – March 2023)\nSenior Software Engineer (Jun 2019 – March 2021)\nSoftware Engineer (May 2018 – Jun 2019)',
+  },
+  {
+    logo: '/images/exp-logo-9.png',
+    company: 'Cash Converters',
+    roles: 'Software Developer (September 2016 – May 2019)',
+  },
+  {
+    logo: '/images/exp-logo-10.png',
+    company: 'NEC',
+    roles: 'Software Developer (September 2012 – September 2016)',
+  },
+];
+
+const volunteering = [
+  { name: 'She Codes', detail: 'Supporting women in tech through community and education.' },
+  { name: 'DDD Perth', detail: 'Volunteer and speaker at Perth\'s inclusive developer conference.' },
+];
+---
+<BaseLayout title="Macklin Hartley — Software Engineer" description="Software engineer working with organisations to build resilient software.">
+  <div class="home-bio">
+    <p>I work with organisations to turn ideas into resilient software by aligning clear goals with thoughtful architecture, lightweight processes and supportive teams. My focus is on understanding how information flows through a system, weighing trade-offs against the right capabilities and untangling the social and technical constraints that often decide a project's success.</p>
+    <p>As generative AI accelerates routine coding, I help teams climb the abstraction ladder, using AI as leverage while we concentrate on problem framing, capability design and continuous learning. I thrive in small, autonomous teams that value outcomes over outputs, and I'm most motivated when solving meaningful problems alongside people I respect and admire.</p>
+    <p class="bio-links">
+      <a href="mailto:macklin@macklin.me">Email</a> · 
+      <a href="https://github.com/macklinhrw" target="_blank" rel="noopener">Github</a> · 
+      <a href="https://www.linkedin.com/in/macklin-hartley/" target="_blank" rel="noopener">LinkedIn</a>
+    </p>
+  </div>
+
+  <h2 class="section-heading">Writing</h2>
+  <ul class="content-list">
+    {posts.map(post => (
+      <li class="content-list-item">
+        <a href={`/writing/${post.data.slug}`}>{post.data.title}</a>
+        <span class="item-date">{formatDate(post.data.date)}</span>
+      </li>
+    ))}
+  </ul>
+
+  <h2 class="section-heading">Talks</h2>
+  <ul class="content-list">
+    {talks.map(talk => (
+      <li class="content-list-item">
+        <a href={`/talks/${talk.data.slug}`}>{talk.data.title}</a>
+        <span class="item-date">{formatDate(talk.data.date)}</span>
+      </li>
+    ))}
+  </ul>
+
+  <h2 class="section-heading">Certifications</h2>
+  <div class="certs-grid">
+    {certifications.map(cert => (
+      <div class="cert-item">
+        <img src={cert.image} alt={cert.name} loading="lazy" />
+        <span class="cert-name">{cert.name}</span>
+      </div>
+    ))}
+  </div>
+
+  <h2 class="section-heading">Experience</h2>
+  <div class="experience-list">
+    {experience.map(exp => (
+      <div class="exp-item">
+        <img src={exp.logo} alt={exp.company} class="exp-logo" loading="lazy" />
+        <div class="exp-details">
+          <div class="exp-company">{exp.company}</div>
+          <div class="exp-roles">{exp.roles}</div>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <h2 class="section-heading">Volunteering</h2>
+  <div class="vol-list">
+    {volunteering.map(v => (
+      <div class="vol-item">
+        <strong>{v.name}</strong><br />{v.detail}
+      </div>
+    ))}
+  </div>
+</BaseLayout>

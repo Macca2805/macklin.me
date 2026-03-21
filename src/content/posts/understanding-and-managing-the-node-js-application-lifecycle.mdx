@@ -1,0 +1,352 @@
+---
+title: "Understanding and Managing the Node.js Application Lifecycle"
+slug: "understanding-and-managing-the-node-js-application-lifecycle"
+date: "2020-12-08"
+hero: "/images/understanding-and-managing-the-node-js-application-lifecycle-hero.jpg"
+description: "_7th April 2021 · 10 minute read_"
+type: "post"
+---
+
+_7th April 2021 · 10 minute read_
+
+> Managing the lifecycle of your running applications is a key part of building robust, scalable systems. As it turns out, how an application is shut down is just as important as how it starts up. Failing to gracefully shutdown an application can lead to unexpected behaviour that can be difficult to debug.
+
+# Before we Start
+
+In this guide we will learn about how the **Node.js** application lifecycle works and implement utility functions to better manage it.
+
+## Building Blocks
+
+### Node.js 14
+
+For this post, I'll be writing to support **Node.js 14** onwards. The examples below will likely work with earlier versions of **Node.js**, although I have not explicitly tested and confirmed compatibility with these versions.
+
+### Typescript 4
+
+My examples will be written in **Typescript**, although this should not be thought of as a blocker if you prefer to use **Javascript**.
+
+### Jest
+
+There are a few unit tests in the code below written for the **Jest **unit testing framework. The unit tests themselves should be reasonably portable if you prefer to use something else.
+
+# An Example
+
+```typescript
+express()
+  .get('/users', async () => {
+    const users = await longRunningDatabaseTask();
+    res.send(users).status(200);
+  })
+  .listen(8080);
+```
+
+In the above example we have an express server with a single route that returns users. The query to retrieve users from the database takes some time to execute (and is therefore aptly named `longRunningDatabaseTask()`
+
+## Why is this a Problem?
+
+While this is a pretty contrived example, let's consider for a moment what could happen if the application is abruptly terminated (by using the `ctrl + c` keyboard shortcut, for example). 
+
+### Hanging Requests
+
+Let's consider the experience for an end-user who has just hit the 'Refresh' button to update a list of users. First the loading spinner appears, the a request to `GET /users` is initiated. Suddenly the application is terminated without warning, before there is a chance to respond.
+
+What happens to the request if the server never returns a response? Most likely, that end-user will be stuck watching that loading spinner for a looong time.
+
+### Database Connection Pools
+
+Let's assume the long running database task is run against a relational database, for example **PostgreSQL**.
+
+When abruptly terminated, the database may inadvertently leave open connections that the application was using. This is a problem because relational database servers usually have a limit for open connections and new connections may be refused if the connection limit is exhausted.
+
+> ❗ **Warning:** It is almost always recommended to close database connection pools as soon as they are no longer required.
+
+# Enter the Lifecycle Manager
+
+The following is an implementation of a lifecycle manager I use day to day;
+
+```typescript
+let running = true;
+const closeListeners: Array<() => Promise<void>> = [];
+
+export const lifecycle = {
+  isOpen: () => running,
+  on: (_: 'close', listener: () => Promise<void>) => 
+    closeListeners.push(listener),
+  close: async () => {
+    if (running) {
+      running = false;
+      await Promise.all(closeListeners.map((listener) => listener()));
+    }
+  },
+  delay: async (ms: number, timer: (step: number) => Promise<void>) => {
+    let remaining = ms;
+    while (running && remaining > 0) {
+      const step = Math.min(remaining, 200);
+      await timer(step);
+      remaining -= step;
+    }
+  },
+};
+```
+
+The lifecycle manager has four functions;
+
+- `isOpen` - Returns a boolean indicating if the application is still running.
+- `on('close')` - An event listener for the application shutdown.
+- `close` - Initiates graceful shutdown of the application.
+- `delay` - A helper function to safely wait for an indicated period of time still while allowing the application to be gracefully shut down.
+## Unit Tests
+
+Below is a simple unit test suite for **Jest** that tests the four functions of the lifecycle manager.
+
+```typescript
+import { lifecycle } from './lifecycle';
+
+describe('lifecycle', () => {
+
+  test('is open should return true', async () => {
+    expect(lifecycle.isOpen()).toEqual(true);
+  });
+
+  test('run step function to ensure timely close', async () => {
+    let steps = 0;
+    const incrementStep = async () => new Promise<void>((resolve) => {
+      steps += 1;
+      return resolve();
+    });
+    await lifecycle.delay(5000, incrementStep);
+    expect(steps).toEqual(25);
+  });
+
+  test('close should fire listeners', async () => {
+    let closed = false;
+    lifecycle.on('close', async () => { closed = true; });
+    await lifecycle.close();
+    expect(closed).toEqual(true);
+  });
+
+  test('is open should return false', async () => {
+    expect(lifecycle.isOpen()).toEqual(false);
+  });
+});
+```
+
+# Using a Lifecycle Manager
+
+## Error Handling
+
+When your application encounters an error it is important to consider application lifecycle in order to manage any error handling before executing a graceful shutdown.
+
+### Signal Events
+
+```typescript
+process
+  .on('SIGTERM', async () => {
+    process.exitCode = 1;
+    await lifecycle.close();
+	})
+  .on('SIGINT', async () => {
+    process.exitCode = 1;
+    await lifecycle.close();
+  });
+```
+
+[Signal Events](https://nodejs.org/api/process.html#process_signal_events) are emitted when the **Node.js** process receives a signal from the host. For example, your application will receive a `SIGTERM` event when in **Amazon ECS** or **Kubernetes **when executing a rolling deployment of a new version of your application. If you don't handle the `SIGTERM` event correctly, you may find your environment fails to deploy the new version.
+
+`SIGTERM`, `SIGINT` and `SIGHUP` are examples of events that you may need to add listeners for depending on your operating system and how your application is run.
+
+> ❗ **Warning: **The official [Node.js documentation recommends](https://nodejs.org/api/process.html#process_process_exit_code) using `process.exitCode` instead of `process.exit()` to allow the process to exit gracefully.
+
+### Process Events
+
+```typescript
+process
+  .on('uncaughtException', async err => {
+    process.exitCode = 1;
+    await lifecycle.close();
+  })
+  .on('unhandledRejection', async () => {
+    process.exitCode = 1;
+    await lifecycle.close();
+  });
+```
+
+It's important to note that this type of event should be thought of as a last resort and likely means your application has fallen into an unrecoverable state. [Uncaught Exception](https://nodejs.org/api/process.html#process_event_uncaughtexception) and [Unhandled Rejection](https://nodejs.org/api/process.html#process_event_unhandledrejection) are examples of events you may need to listen to in order to handle errors before executing a graceful shutdown.
+
+> ℹ️ **Tip: **Unhandled Promise Rejections can be difficult to diagnose and debug. You can setup [ESLint](https://eslint.org/) to track and prevent unhandled rejections using the [no floating promises](https://www.npmjs.com/package/eslint-plugin-no-floating-promise) rule.
+
+## Graceful Shutdown
+
+Certain tasks in your node application can operate in the background and have special methods that need to be run when the application is ready to be shut down.
+
+### HTTP Server
+
+```typescript
+// Create and start express server.
+const app = express()
+  .post('/close', async () => {
+    await lifecycle.close();
+    res.sendStatus(200);
+  })
+  .listen(env.port);
+
+// Close the server upon lifecycle close.
+lifecycle.on('close', app.close);
+```
+
+If your application starts a HTTP server ([express](https://expressjs.com/) in this case) that listens for requests, you need to ensure the server is gracefully closed when the application lifecycle is finished. Not explicitly closing the server can result in dropped connections.
+
+### Database Connections
+
+```typescript
+import { Pool } from 'pg';
+import { lifecycle } from './lifecycle';
+
+// Create lifecycle-managed connection pool.
+const pool = new Pool(...);
+lifecycle.on('close', pool.end);
+
+(async (): Promise<void> => {
+  try {
+	  await runDatabaseTask(pool);
+  } finally {
+    // Close lifecycle regardless of outcome.
+    await lifecycle.close();
+  }
+// Close lifecycle upon error.
+})().catch(async () => {
+  process.exitCode = 1;
+  await lifecycle.close();
+});
+```
+
+If your application relies on a database connection ([PostgreSQL](https://www.postgresql.org/) in this case), it is important to ensure that all connections are closed before the application exits. Leaving connections open can impact performance and lead to exhaustion of available connections.
+
+### Shipping Logs and Metrics
+
+```typescript
+lifecycle.on('close', async () => await logger.shipLogs());
+lifecycle.on('close', async () => await metrics.push());
+```
+
+Depending on the configuration, it may be important to ensure that all logs and metrics are shipped before the application closes. Failing to account for this will obviously make complex bugs very difficult to diagnose.
+
+### Intervals
+
+```typescript
+// Create a 1s interval timer.
+const interval = setInterval(() => { ... }, 1000);
+
+// Clear the interval when the lifecycle closes.
+lifecycle.on('close', () => clearInterval(interval))
+```
+
+If you have any code that uses `setInterval`, it is important to ensure that the interval is cleared before your application exits. Not clearing intervals can mean your application stays open indefinitely after signal or error events.
+
+### Delay Timers
+
+```typescript
+// Asynchronously close the app after 5 seconds.
+setTimeout(lifecycle.close, 5000);
+
+// Wait for 5 minutes.
+await lifecycle.delay(360000); 
+```
+
+Instead of using `setTimeout` to introduce delay into your application, the lifecycle manager has a `delay` method. Unlike `setTimeout`, this method can be stopped by the lifecycle manager at any point during the timer regardless the length of the delay.
+
+# Complete Examples
+
+Below are two complete examples if you just want to copy + paste the code 😉
+
+## Web Server
+
+```typescript
+import express from 'express';
+import { Pool } from 'pg';
+import { lifecycle } from './lifecycle';
+
+// Ensure signal/process events are lifecycle-managed.
+const exit = async () => {
+  process.exitCode = 1;
+  await lifecycle.close();
+};
+process
+  .on('SIGTERM', exit)
+  .on('SIGINT', exit)
+  .on('uncaughtException', exit)
+  .on('unhandledRejection', exit)
+
+// Create database connection.
+const pool = new Pool(...);
+
+// Create and start express server.
+const app = express()
+  .use(router(pool))
+  .listen(env.port);
+
+// Close express server first, then close connection pool.
+// This prevents the pool from closing while a request is open.
+lifecycle.on('close', {
+  app.close(() => pool.end());
+});
+```
+
+## Headless Process
+
+```typescript
+import { Pool } from 'pg';
+import { lifecycle } from './lifecycle';
+
+// Ensure signal/process events are lifecycle-managed.
+const exit = async () => {
+  process.exitCode = 1;
+  await lifecycle.close();
+};
+process
+  .on('SIGTERM', exit)
+  .on('SIGINT', exit)
+  .on('uncaughtException', exit)
+  .on('unhandledRejection', exit)
+
+// Create lifecycle-managed interval.
+let loops = 0;
+const logLoops = setInterval(() =>
+  console.log(`Loop counter: ${loops}`), 5000);
+lifecycle.on('close', clearInterval(logLoops));
+
+// Create lifecycle-managed database connection.
+const pool = new Pool(...);
+lifecycle.on('close', pool.end);
+
+(async () => {
+  try {
+    // Continuously run until lifecycle closes.
+    while (lifecycle.open()) {
+      loops++;
+      await runDatabaseTask(pool);
+
+      // Use lifecycle for delay.
+      await lifecycle.delay(1000);
+    }
+  // Close lifecycle on main thread exit.
+  } finally { await lifecycle.close(); }
+
+// Lifecycle-managed closure for extra safety.
+})().catch(exit);
+```
+
+# Resources
+
+The lifecycle manager and related code are made available in the following Github repository;
+
+[https://github.com/Macca2805/lifecycle-manager](https://github.com/Macca2805/lifecycle-manager)
+
+[Nairi Harutyunyan](https://hackernoon.com/u/nairi_harutyunyan) has written a similar post on how to handle graceful shutdowns in Node.js applications.
+
+[https://hackernoon.com/graceful-shutdown-in-nodejs-2f8f59d1c357](https://hackernoon.com/graceful-shutdown-in-nodejs-2f8f59d1c357)
+
+The official Node.js documentation has some important information about how to correctly manage a graceful shutdown.
+
+[https://nodejs.org/api/process.html#process_process_exit_code](https://nodejs.org/api/process.html#process_process_exit_code)
+

@@ -1,0 +1,125 @@
+{
+  "posts": [
+    {
+      "title": "Where Classes in TypeScript Fall Short",
+      "slug": "classes-in-typescript",
+      "date": "2023-01-21",
+      "heroPath": "/images/classes-in-typescript-hero.jpg",
+      "description": "_26th January 2023 · 15 minute read_"
+    },
+    {
+      "title": "All the Tools I Used to Build this Website",
+      "slug": "everything-i-used-to-build-this-website",
+      "date": "2021-06-07",
+      "heroPath": "/images/everything-i-used-to-build-this-website-hero.jpg",
+      "description": "_7th June 2021 · 5 minute read_"
+    },
+    {
+      "title": "7 Useful Tools for Tracking Web Performance",
+      "slug": "7-useful-tools-for-monitoring-web-performance-user-experience",
+      "date": "2021-02-19",
+      "heroPath": "/images/7-useful-tools-for-monitoring-web-performance-user-experience-hero.jpg",
+      "description": "_22nd February 2021 · 7 minute read_"
+    },
+    {
+      "title": "How to Create AWS Route53 Subdomains with Multiple Accounts",
+      "slug": "share-aws-route-53-subdomains-across-multiple-accounts",
+      "date": "2020-09-18",
+      "heroPath": "/images/share-aws-route-53-subdomains-across-multiple-accounts-hero.jpg",
+      "description": "_2nd January 2021 · 10 minute read_"
+    },
+    {
+      "title": "Understanding and Managing the Node.js Application Lifecycle",
+      "slug": "understanding-and-managing-the-node-js-application-lifecycle",
+      "date": "2020-12-08",
+      "heroPath": "/images/understanding-and-managing-the-node-js-application-lifecycle-hero.jpg",
+      "description": "_7th April 2021 · 10 minute read_"
+    },
+    {
+      "title": "Configuring Access Management in Amazon EKS with IAM Roles for Service Accounts",
+      "slug": "configure-access-management-amazon-eks-iam-roles-for-service-accounts-cloudformation",
+      "date": "2021-04-10",
+      "heroPath": "/images/configure-access-management-amazon-eks-iam-roles-for-service-accounts-cloudformation-hero.jpg",
+      "description": "_19th April 2021 · 15 minute read_"
+    }
+  ],
+  "talks": [
+    {
+      "title": "Just-in-time Architecture",
+      "slug": "talk-just-in-time-architecture",
+      "date": "2022-11-26",
+      "heroPath": "",
+      "description": "_December 2022 · _[_View the slides_](https://slides.com/macklin/just-in-time-architecture)_ _"
+    },
+    {
+      "title": "How Fast is your Website Really?",
+      "slug": "talk-how-fast-is-your-website-really",
+      "date": "2022-10-04",
+      "heroPath": "",
+      "description": "_September 2022 · _[_View the slides_](https://slides.com/macklin/how-fast-is-your-website-really/)"
+    },
+    {
+      "title": "Web Accessibility in Practice",
+      "slug": "web-accessibility-in-practice",
+      "date": "2021-08-20",
+      "heroPath": "",
+      "description": "_August 2016 · _[_View the slides_](https://docs.google.com/presentation/d/1hkwOsv_WBEgkPQ2vQia6sr013slhcL30ov9M7FjZ7G8/pub?start=false&loop=false&delayms=3000)"
+    },
+    {
+      "title": "Every Good Outage Starts with a Queue",
+      "slug": "every-good-outage-starts-with-a-queue",
+      "date": "2021-08-20",
+      "heroPath": "",
+      "description": "_August 2019 · _[_View the slides_](https://slides.com/macklin/every-good-outage-starts-with-a-queue)"
+    },
+    {
+      "title": "Everything is a Feature Toggle",
+      "slug": "everything-is-a-feature-toggle",
+      "date": "2021-08-20",
+      "heroPath": "",
+      "description": "_August 2021 · DDD Perth · _[_View the slides_](https://slides.com/macklin/everything-is-a-feature-toggle)"
+    }
+  ],
+  "imageDownloads": [
+    "classes-in-typescript-hero.jpg",
+    "classes-in-typescript-img-1.png",
+    "classes-in-typescript-img-2.png",
+    "classes-in-typescript-img-3.png",
+    "everything-i-used-to-build-this-website-hero.jpg",
+    "everything-i-used-to-build-this-website-img-1.png",
+    "everything-i-used-to-build-this-website-img-2.png",
+    "everything-i-used-to-build-this-website-img-3.png",
+    "everything-i-used-to-build-this-website-img-4.png",
+    "everything-i-used-to-build-this-website-img-5.png",
+    "everything-i-used-to-build-this-website-img-6.png",
+    "everything-i-used-to-build-this-website-img-7.png",
+    "everything-i-used-to-build-this-website-img-8.png",
+    "everything-i-used-to-build-this-website-img-9.png",
+    "everything-i-used-to-build-this-website-img-10.png",
+    "everything-i-used-to-build-this-website-img-11.png",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-hero.jpg",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-1.gif",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-2.gif",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-3.gif",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-4.png",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-5.png",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-6.png",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-7.png",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-8.png",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-9.png",
+    "7-useful-tools-for-monitoring-web-performance-user-experience-img-10.png",
+    "share-aws-route-53-subdomains-across-multiple-accounts-hero.jpg",
+    "share-aws-route-53-subdomains-across-multiple-accounts-img-1.png",
+    "share-aws-route-53-subdomains-across-multiple-accounts-img-1.png",
+    "share-aws-route-53-subdomains-across-multiple-accounts-img-1.png",
+    "share-aws-route-53-subdomains-across-multiple-accounts-img-1.png",
+    "share-aws-route-53-subdomains-across-multiple-accounts-img-2.png",
+    "share-aws-route-53-subdomains-across-multiple-accounts-img-2.png",
+    "understanding-and-managing-the-node-js-application-lifecycle-hero.jpg",
+    "configure-access-management-amazon-eks-iam-roles-for-service-accounts-cloudformation-hero.jpg"
+  ],
+  "imageFailures": [],
+  "unsupportedBlocks": [
+    "synced_block"
+  ]
+}

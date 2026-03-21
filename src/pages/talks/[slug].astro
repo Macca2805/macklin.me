@@ -1,0 +1,37 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { getCollection, render } from 'astro:content';
+
+export async function getStaticPaths() {
+  const talks = await getCollection('talks');
+  return talks.map(talk => ({
+    params: { slug: talk.data.slug },
+    props: { talk },
+  }));
+}
+
+const { talk } = Astro.props;
+const { Content } = await render(talk);
+
+function formatDate(dateStr: string) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+---
+<BaseLayout 
+  title={`${talk.data.title} — Macklin Hartley`}
+  description={talk.data.description}
+  image={talk.data.hero}
+>
+  {talk.data.hero && (
+    <img src={talk.data.hero} alt="" class="article-hero" />
+  )}
+  <a href="/" class="back-link">← Back</a>
+  <div class="article-header">
+    <h1 class="article-title">{talk.data.title}</h1>
+    <p class="article-meta">{formatDate(talk.data.date)}</p>
+  </div>
+  <div class="article-body">
+    <Content />
+  </div>
+</BaseLayout>
