@@ -34,7 +34,7 @@ One use for encapsulation is to hide implementation details that are not relevan
 
 Let’s consider a simple example written for of a class implemented in **TypeScript**;
 
-```plain text
+```typescript
 class Bicycle {
   constructor(
     private readonly cadence = 0,
@@ -56,7 +56,7 @@ This example also features the `readonly` keyword which is borrowed from **C#**,
 
 Below is an example for the equivalent class written in **Java;**
 
-```plain text
+```java
 class Bicycle {
   private final int cadence;
   private final int speed;
@@ -87,7 +87,7 @@ Combining these keywords produces an expectation whereby properties on instances
 
 Consider the example below, which uses the `readonly` keyword to prevent mutability of the instance fields on a class;
 
-```plain text
+```typescript
 interface HasIdentity {
   id: number;
 }
@@ -117,7 +117,7 @@ The immutability offered by **TypeScript’s** `readonly` keyword is only mainta
 
 Consider the example below of the equivalent code expressed in **Java**;
 
-```plain text
+```java
 public class Mutability {
 
   static void illegallyMutatePerson(HasIdentity person) {
@@ -162,7 +162,7 @@ Luckily there are a few options available to implement immutability in **TypeScr
 
 **JavaScript** natively supports a feature called **Getters**, which enable control over the mutability of instance fields in classes. In the example below, we can internalise the instance fields and allow readonly access to them by implementing **Getters**;
 
-```plain text
+```typescript
 interface HasIdentity {
   id: number;
 }
@@ -202,7 +202,7 @@ console.log(person);
 
 Similarly, the `Object.freeze()` method prevents extensions and makes existing properties on any object in **JavaScript** non-writeable and non-configurable. A frozen object can no longer be changed: new properties cannot be added, existing properties cannot be removed, their enumerability, configurability, writability, or value cannot be changed, and the object's prototype cannot be re-assigned. Consider the example below which produces a similar error to the one in the **Getters** example;
 
-```plain text
+```typescript
 interface HasIdentity {
   id: number;
 }
@@ -235,7 +235,7 @@ console.log(person);
 
 The example below uses the `private` keyword on both the `author` and `title` instance fields to prevent them from being able to be accessed from outside the class. Unfortunately it appears the `console.log()` statements have no concerns about violating encapsulation and leaking the internals of this instance;
 
-```plain text
+```typescript
 class Book {
   constructor(
     private readonly author: string,
@@ -252,7 +252,7 @@ console.log(book);
 
 **TypeScript’s** `private` keyword is only relevant at compile-time and is subverted just about as easily as the `readonly` keyword. In another example below, we see that libraries like **Jest** default to determining whether two classes are equal by comparing each of the instance fields, again ignoring the `private` modifier;
 
-```plain text
+```typescript
 class Book {
   constructor(
     private readonly author: string,
@@ -306,7 +306,7 @@ Again, luckily there are options available to ensure our classes are properly en
 
 **JavaScript** natively implements `private` functionality to any field prefixed with a hash `#`. See in the example below where the `author` and `title` properties are successfully hidden.
 
-```plain text
+```typescript
 class Book {
   #author: string;
   #title: string;
@@ -332,7 +332,7 @@ Because the instance fields are now hidden, this results in more of the tests co
 
 In order to fix this, we need to implement a method for comparing our class to something else. In the example below, I’ve implemented the `.equals(obj)` method which explicitly compares each instance field to the input as well as confirms a matching type.
 
-```plain text
+```typescript
 class Book {
   #author: string;
   #title: string;
@@ -361,7 +361,7 @@ class Book {
 
 Then the tests are updated to use the `.equals()` method, replacing any usage of **Jest’s** `.toEqual(value)` or `.toStrictEquals(value)` matchers.
 
-```plain text
+```typescript
 describe(`given one instance of Book`, () => {
   const book1 = new Book(`Macklin Hartley`, `Classes in TypeScript`);
 
