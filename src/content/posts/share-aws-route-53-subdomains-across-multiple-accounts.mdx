@@ -15,9 +15,9 @@ _2nd January 2021 · 10 minute read_
 
 For this guide, we will set up the following domain scheme for our environments:
 
-`*.macklin.xyz` → **Production**
+`*.macklin.xyz` →**Production**
 
-`*.dev.macklin.xyz` → **Development**
+`*.dev.macklin.xyz` →**Development**
 
 ## Architecture
 
@@ -29,15 +29,15 @@ The architecture for this guide will align with the following diagram;
 
 ### Route 53
 
-We'll use **Route 53** to create **Hosted Zones** that act as containers for groups of four name servers spread across 4 top level domains. We'll use **Record Sets** to specify additional DNS records which will direct traffic between accounts. We'll also use **Route 53** to register the domain.
+We'll use**Route 53**to create**Hosted Zones**that act as containers for groups of four name servers spread across 4 top level domains. We'll use**Record Sets**to specify additional DNS records which will direct traffic between accounts. We'll also use**Route 53**to register the domain.
 
 ### Certificate Manager
 
-It would be irresponsible to open our account up to public internet traffic without enabling HTTPS. **Certificate Manager** will handle the provisioning and management of our TLS certificates.
+It would be irresponsible to open our account up to public internet traffic without enabling HTTPS.**Certificate Manager**will handle the provisioning and management of our TLS certificates.
 
 ### CloudFormation
 
-We'll be making a deliberate effort to keep the configuration as minimal and default as possible. While there may be more advanced tools for deploying infrastructure-as-code, I respect **CloudFormation** in some part for it's simplicity. However, there is no reason not to use other tools such as [Terraform](https://www.terraform.io/) or [Pulumi](https://www.pulumi.com/) if preferred.
+We'll be making a deliberate effort to keep the configuration as minimal and default as possible. While there may be more advanced tools for deploying infrastructure-as-code, I respect**CloudFormation**in some part for it's simplicity. However, there is no reason not to use other tools such as [Terraform](https://www.terraform.io/) or [Pulumi](https://www.pulumi.com/) if preferred.
 
 ## Configuration
 
@@ -45,21 +45,21 @@ We'll be making a deliberate effort to keep the configuration as minimal and def
 
 **AWS Organization with Multiple Accounts**
 
-When using the **AWS Organizations** feature to provision and manage multiple accounts, a [typical recommendation](https://aws.amazon.com/blogs/security/guidelines-for-when-to-use-accounts-users-and-groups) for teams is to deploy each of their environments to separate AWS accounts. This post assumes you have set up your account with [AWS Organizations](https://aws.amazon.com/organizations/) and are using it to automatically provision and manage additional accounts.
+When using the**AWS Organizations**feature to provision and manage multiple accounts, a [typical recommendation](https://aws.amazon.com/blogs/security/guidelines-for-when-to-use-accounts-users-and-groups) for teams is to deploy each of their environments to separate AWS accounts. This post assumes you have set up your account with [AWS Organizations](https://aws.amazon.com/organizations/) and are using it to automatically provision and manage additional accounts.
 
 ![](/images/share-aws-route-53-subdomains-across-multiple-accounts-img-1.png)
 
-For this guide, we have one account for the **Production **environment and one for the **Development** environment, both managed by the root account.
+For this guide, we have one account for the**Production**environment and one for the**Development**environment, both managed by the root account.
 
 ---
 
 **Register a Domain with Route 53**
 
-When a domain is registered using **Route 53** it can only belong to a single account. We are going to use the **Production **account for this.
+When a domain is registered using**Route 53**it can only belong to a single account. We are going to use the**Production**account for this.
 
 ![](/images/share-aws-route-53-subdomains-across-multiple-accounts-img-1.png)
 
-In the **Route 53** dashboard in the **AWS Console**, select **Registered Domains**. Then, select an available domain using the search feature and follow the steps to purchase and register your domain.
+In the**Route 53**dashboard in the**AWS Console**, select**Registered Domains**. Then, select an available domain using the search feature and follow the steps to purchase and register your domain.
 
 ---
 
@@ -77,7 +77,7 @@ For other operating systems, [follow this guide](https://stedolan.github.io/jq/d
 
 **Install the AWS CLI**
 
-We will be using the **AWS CLI** in order to automate a lot of the steps involved in this process and to avoid needing to click around in the console.
+We will be using the**AWS CLI**in order to automate a lot of the steps involved in this process and to avoid needing to click around in the console.
 
 For macOS, use [Homebrew](https://brew.sh/) → `brew install awscli`.
 
@@ -89,22 +89,22 @@ For other operating systems, [follow this guide](https://docs.aws.amazon.com/cli
 
 **Configure the AWS CLI**
 
-Firstly, create a new user using **IAM** in the **AWS Console**. Under 'Select AWS access type', select 'programmatic access' and continue.
+Firstly, create a new user using**IAM**in the**AWS Console**. Under 'Select AWS access type', select 'programmatic access' and continue.
 
 ![](/images/share-aws-route-53-subdomains-across-multiple-accounts-img-1.png)
 
-For the purposes of this guide, I have attached this user to the `AdministratorAccess` policy, but for security reasons this is **NOT RECOMMENDED**. Take the time to create a user with access to the services you need, which will be **Route 53**, **Certificate Manager** and **CloudFormation**.
+For the purposes of this guide, I have attached this user to the `AdministratorAccess` policy, but for security reasons this is**NOT RECOMMENDED**. Take the time to create a user with access to the services you need, which will be**Route 53**,**Certificate Manager**and**CloudFormation**.
 
 ![](/images/share-aws-route-53-subdomains-across-multiple-accounts-img-2.png)
 
-At the end of the user setup you will be able to copy the **Access Key ID** and **Secret Access Key**. Save them in preparation for the next step.
+At the end of the user setup you will be able to copy the**Access Key ID**and**Secret Access Key**. Save them in preparation for the next step.
 
-Use `aws configure` to set up a profile for managing resources in the **Development** environment and when prompted, enter the **Access Key ID** and **Secret Access Key** from before:
+Use `aws configure` to set up a profile for managing resources in the**Development**environment and when prompted, enter the**Access Key ID**and**Secret Access Key**from before:
 
 ```bash
 **$ aws configure --profile dev
-**AWS Access Key ID [None]: *********************
-AWS Secret Access Key [None]: ***************************************
+**AWS Access Key ID [None]:*********************
+AWS Secret Access Key [None]:***************************************
 Default region name [None]: us-west-1
 Default output format [None]: json
 ```
@@ -125,12 +125,12 @@ Check your configuration using `aws iam list-access-keys` and confirm the expect
 }
 ```
 
-Repeat the above steps for the **Production** account, retrieving your **Access Key ID** and **Secret Access Key** from the AWS console in the **Production** account.
+Repeat the above steps for the**Production**account, retrieving your**Access Key ID**and**Secret Access Key**from the AWS console in the**Production**account.
 
 ```bash
 **$ aws configure --profile prod
-**AWS Access Key ID [None]: *********************
-AWS Secret Access Key [None]: ***************************************
+**AWS Access Key ID [None]:*********************
+AWS Secret Access Key [None]:***************************************
 Default region name [None]: us-west-1
 Default output format [None]: jso
 ```
@@ -151,7 +151,7 @@ Default output format [None]: jso
 
 # Development Environment
 
-Below is the template for provisioning the** Hosted Zone **using** Route 53**, and **Certificate** using **Certificate Manager**. Copy the template and save it to your working directory as `dev-dns.yml`.
+Below is the template for provisioning the**Hosted Zone**using**Route 53**, and**Certificate**using**Certificate Manager**. Copy the template and save it to your working directory as `dev-dns.yml`.
 
 ```yaml
 AWSTemplateFormatVersion: '2010-09-09'
@@ -180,7 +180,7 @@ Resources:
           Value: certificate
 ```
 
-Next, run the following to create a new stack using **CloudFormation**:
+Next, run the following to create a new stack using**CloudFormation**:
 
 ```bash
 $ aws cloudformation create-stack --template-body file://dev-dns.yml \
@@ -190,15 +190,15 @@ $ aws cloudformation create-stack --template-body file://dev-dns.yml \
 
 > ℹ️ For convenience, I have automated the above steps for provisioning the development environment with [this shell script available from Github](https://github.com/Macca2805/blog-aws-route-53-subdomains/blob/main/dev-dns.sh). 
 
-If you're watching and waiting for your **CloudFormation** stack to deploy, you'll notice it will remain in the `CREATE_IN_PROGRESS` state indefinitely. This is because your certificate request is waiting to be validated by AWS, which cannot happen until we have also set up the **Production** environment (see [here for more information](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-certificatemanager-certificate.html)).
+If you're watching and waiting for your**CloudFormation**stack to deploy, you'll notice it will remain in the `CREATE_IN_PROGRESS` state indefinitely. This is because your certificate request is waiting to be validated by AWS, which cannot happen until we have also set up the**Production**environment (see [here for more information](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-certificatemanager-certificate.html)).
 
 It is okay to proceed in the meantime - the stack will move into the `CREATE_COMPLETE` state once this guide is complete.
 
 ## Name Server (NS) Records
 
-Next, we're going to use the **AWS CLI** to extract the **NS records** that were assigned to the newly created **Hosted Zone** in **Route 53**. Since we're aiming to automate this process, we're going to use the **AWS CLI** to retrieve the 4 **NS records** associated with the freshly provisioned **Hosted Zone**.
+Next, we're going to use the**AWS CLI**to extract the**NS records**that were assigned to the newly created**Hosted Zone**in**Route 53**. Since we're aiming to automate this process, we're going to use the**AWS CLI**to retrieve the 4**NS records**associated with the freshly provisioned**Hosted Zone**.
 
-Run the following in a terminal window to first retrieve the **Hosted Zone ID** for the **Development** environment:
+Run the following in a terminal window to first retrieve the**Hosted Zone ID**for the**Development**environment:
 
 ```bash
 $ aws route53 list-hosted-zones-by-name \
@@ -207,7 +207,7 @@ $ aws route53 list-hosted-zones-by-name \
 /hostedzone/Z095EXAMPLEGW15BTTB
 ```
 
-Now we'll flex some muscle with JQ to list the record sets for the **Hosted Zone**, selecting its associated **NS Records**. Run the following in a terminal window:
+Now we'll flex some muscle with JQ to list the record sets for the**Hosted Zone**, selecting its associated**NS Records**. Run the following in a terminal window:
 
 ```bash
 $ aws route53 list-resource-record-sets \
@@ -222,11 +222,11 @@ $ aws route53 list-resource-record-sets \
 ]
 ```
 
-This will extract the **NS records** that are associated with the **Hosted Zone**. Save the output as we will need it later.
+This will extract the**NS records**that are associated with the**Hosted Zone**. Save the output as we will need it later.
 
 # Production Environment
 
-Below is the **CloudFormation **template we will use to provision infrastructure in the **Production** environment. Copy the template and save it to your working directory as `prod-dns.yml`.
+Below is the**CloudFormation**template we will use to provision infrastructure in the**Production**environment. Copy the template and save it to your working directory as `prod-dns.yml`.
 
 ```yaml
 AWSTemplateFormatVersion: '2010-09-09'
@@ -275,7 +275,7 @@ Resources:
       Type: NS
 ```
 
-Run the following in a terminal window to first retrieve the **Hosted Zone ID** for the **Production** environment (this **Hosted Zone** was created on your behalf when you registered the domain):
+Run the following in a terminal window to first retrieve the**Hosted Zone ID**for the**Production**environment (this**Hosted Zone**was created on your behalf when you registered the domain):
 
 ```bash
 $ aws route53 list-hosted-zones-by-name \
@@ -284,7 +284,7 @@ $ aws route53 list-hosted-zones-by-name \
 /hostedzone/Z095EXAMPLEGW15BTTB
 ```
 
-Next, run the following to create a new stack using **CloudFormation**, replacing the values such as `HostedZoneId`, `HostedZoneDomain`, `DevHostedZoneDomain`, and the four **NS Records** from before:
+Next, run the following to create a new stack using**CloudFormation**, replacing the values such as `HostedZoneId`, `HostedZoneDomain`, `DevHostedZoneDomain`, and the four**NS Records**from before:
 
 ```bash
 $ aws cloudformation create-stack --template-body file://prod-dns.yml \
@@ -302,11 +302,11 @@ $ aws cloudformation create-stack --template-body file://prod-dns.yml \
 
 ### What's Next?
 
-Under **Route 53** in the **AWS Console** we can now view the newly created **NS Records** for `macklin.xyz` and `dev.macklin.xyz`.
+Under**Route 53**in the**AWS Console**we can now view the newly created**NS Records**for `macklin.xyz` and `dev.macklin.xyz`.
 
 ![](/images/share-aws-route-53-subdomains-across-multiple-accounts-img-2.png)
 
-You may know that DNS propagation can take up to 30 minutes, so now is a good time to take a coffee or tea break. In the meantime, you can confirm DNS propagation status using an [online tool](https://www.whatsmydns.net/), or by using the `dig` CLI tool. Below is an example `dig` output for the **Development** environment;
+You may know that DNS propagation can take up to 30 minutes, so now is a good time to take a coffee or tea break. In the meantime, you can confirm DNS propagation status using an [online tool](https://www.whatsmydns.net/), or by using the `dig` CLI tool. Below is an example `dig` output for the**Development**environment;
 
 ```shell
 $ dig dev.macklin.xyz -t NS
@@ -318,7 +318,7 @@ dev.macklin.xyz.	172800	IN	NS	ns-452.awsdns-56.com.
 dev.macklin.xyz.	172800	IN	NS	ns-935.awsdns-52.net.
 ```
 
-And below is an example output for the **Production** environment, noting that the answer section contains different **NS Records** to the **Development** environment;
+And below is an example output for the**Production**environment, noting that the answer section contains different**NS Records**to the**Development**environment;
 
 ```shell
 $ dig macklin.xyz -t NS
@@ -332,11 +332,11 @@ macklin.xyz.		172800	IN	NS	ns-756.awsdns-30.net.
 
 # Pricing
 
-Cost can vary depending on the TLD of the domain you select. The cost of my `.xyz` domain is **US$12.00/year **(**AU$16.29/year** at the time of writing). The costs associated with **AWS**, including **Route53** and **Certificate Manager** are **US$13.20/year **(**AU$17.76/year** at the time of writing).
+Cost can vary depending on the TLD of the domain you select. The cost of my `.xyz` domain is**US$12.00/year**(**AU$16.29/year**at the time of writing). The costs associated with**AWS**, including**Route53**and**Certificate Manager**are**US$13.20/year**(**AU$17.76/year**at the time of writing).
 
 # Resources
 
-The **CloudFormation** templates and install scripts are made available in the following Github repository;
+The**CloudFormation**templates and install scripts are made available in the following Github repository;
 
 [https://github.com/Macca2805/blog-aws-route-53-subdomains](https://github.com/Macca2805/blog-aws-route-53-subdomains)
 
