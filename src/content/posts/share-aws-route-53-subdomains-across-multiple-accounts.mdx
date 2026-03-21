@@ -14,9 +14,8 @@ type: "post"
 
 For this guide, we will set up the following domain scheme for our environments:
 
-`*.macklin.xyz` → **Production**
-
-`*.dev.macklin.xyz` → **Development**
+* `*.macklin.xyz` → **Production**
+* `*.dev.macklin.xyz` → **Development**
 
 ## Architecture
 
@@ -66,11 +65,9 @@ In the **Route 53** dashboard in the **AWS Console**, select **Registered Domain
 
 In order to automate some parts of this process, we will use `jq`, a tool to parse JSON data in the terminal.
 
-For macOS, use [Homebrew](https://brew.sh/) → `brew install jq`.
-
-For Windows, use [Chocolatey](https://chocolatey.org/) → `choco install jq`.
-
-For other operating systems, [follow this guide](https://stedolan.github.io/jq/download/).
+* For macOS, use [Homebrew](https://brew.sh/) → `brew install jq`.
+* For Windows, use [Chocolatey](https://chocolatey.org/) → `choco install jq`.
+* For other operating systems, [follow this guide](https://stedolan.github.io/jq/download/).
 
 ---
 
@@ -78,11 +75,9 @@ For other operating systems, [follow this guide](https://stedolan.github.io/jq/d
 
 We will be using the **AWS CLI** in order to automate a lot of the steps involved in this process and to avoid needing to click around in the console.
 
-For macOS, use [Homebrew](https://brew.sh/) → `brew install awscli`.
-
-For Windows, use [Chocolatey](https://chocolatey.org/) → `choco install awscli`.
-
-For other operating systems, [follow this guide](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html).
+* For macOS, use [Homebrew](https://brew.sh/) → `brew install awscli`.
+* For Windows, use [Chocolatey](https://chocolatey.org/) → `choco install awscli`.
+* For other operating systems, [follow this guide](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html).
 
 ---
 
