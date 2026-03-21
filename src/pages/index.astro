@@ -14,13 +14,22 @@ function formatDate(dateStr: string) {
   return d.toLocaleDateString('en-AU', { year: 'numeric', month: 'short' });
 }
 
+const postEmojis: Record<string, string> = {
+  'classes-in-typescript': '🔬',
+  'everything-i-used-to-build-this-website': '👨🏼‍💻',
+  'configure-access-management-amazon-eks-iam-roles-for-service-accounts-cloudformation': '🔐',
+  'understanding-and-managing-the-node-js-application-lifecycle': '🌴',
+  '7-useful-tools-for-monitoring-web-performance-user-experience': '🏎️',
+  'share-aws-route-53-subdomains-across-multiple-accounts': '🌏',
+};
+
 const certifications = [
-  { image: '/images/cert-1.png', name: 'AWS Certified Solutions Architect – Associate' },
-  { image: '/images/cert-2.png', name: 'AWS Certified Developer – Associate' },
-  { image: '/images/cert-3.png', name: 'AWS Certified SysOps Administrator – Associate' },
-  { image: '/images/cert-4.png', name: 'Terraform Certified Associate' },
-  { image: '/images/cert-5.png', name: 'Snowflake Hands On Essentials – Data Warehouse' },
-  { image: '/images/cert-6.png', name: 'Certified Kubernetes Application Developer' },
+  { image: '/images/cert-1.png', name: 'AWS Certified Solutions Architect – Associate', url: 'https://www.credly.com/badges/4c910212-5137-483f-9a0b-72b27e16d0de/public_url' },
+  { image: '/images/cert-2.png', name: 'AWS Certified Developer – Associate', url: 'https://www.credly.com/badges/2b44c424-12c9-460e-b9fd-b3ae89fc6680/public_url' },
+  { image: '/images/cert-3.png', name: 'AWS Certified SysOps Administrator – Associate', url: 'https://www.credly.com/badges/d34522ba-1749-440b-8611-9bdb3c4cd616' },
+  { image: '/images/cert-4.png', name: 'Terraform Certified Associate', url: 'https://www.credly.com/badges/073f5774-b32b-4be6-a31e-fba0b6805ca7/public_url' },
+  { image: '/images/cert-5.png', name: 'Snowflake Hands On Essentials – Data Warehouse', url: 'https://www.credly.com/users/macklin-hartley/badges' },
+  { image: '/images/cert-6.png', name: 'Certified Kubernetes Application Developer', url: 'https://www.credly.com/badges/d4d158d6-0a00-4c15-9196-ca9857b2a1ed' },
 ];
 
 const experience = [
@@ -45,13 +54,15 @@ const experience = [
     roles: 'Software Developer (September 2012 – September 2016)',
   },
 ];
-
-const volunteering = [
-  { name: 'She Codes', detail: 'Supporting women in tech through community and education.' },
-  { name: 'DDD Perth', detail: 'Volunteer and speaker at Perth\'s inclusive developer conference.' },
-];
 ---
-<BaseLayout title="Macklin Hartley — Software Engineer" description="Software engineer working with organisations to build resilient software.">
+<BaseLayout title="Macklin Hartley | International Conference Speaker | Principal Engineer @ WeMoney" description="Software engineer working with organisations to build resilient software.">
+  <div class="hero-section">
+    <img src="/images/hero-banner.jpg" alt="Conference hero" class="hero-banner" />
+    <div class="hero-headshot-wrap">
+      <img src="/images/profile-headshot.jpg" alt="Macklin Hartley" class="hero-headshot" />
+    </div>
+  </div>
+
   <div class="home-bio">
     <p>I work with organisations to turn ideas into resilient software by aligning clear goals with thoughtful architecture, lightweight processes and supportive teams. My focus is on understanding how information flows through a system, weighing trade-offs against the right capabilities and untangling the social and technical constraints that often decide a project's success.</p>
     <p>As generative AI accelerates routine coding, I help teams climb the abstraction ladder, using AI as leverage while we concentrate on problem framing, capability design and continuous learning. I thrive in small, autonomous teams that value outcomes over outputs, and I'm most motivated when solving meaningful problems alongside people I respect and admire.</p>
@@ -66,7 +77,10 @@ const volunteering = [
   <ul class="content-list">
     {posts.map(post => (
       <li class="content-list-item">
-        <a href={`/writing/${post.data.slug}`}>{post.data.title}</a>
+        <a href={`/${post.data.slug}`}>
+          <span class="item-icon">{postEmojis[post.data.slug] || '📝'}</span>
+          {post.data.title}
+        </a>
         <span class="item-date">{formatDate(post.data.date)}</span>
       </li>
     ))}
@@ -76,7 +90,10 @@ const volunteering = [
   <ul class="content-list">
     {talks.map(talk => (
       <li class="content-list-item">
-        <a href={`/talks/${talk.data.slug}`}>{talk.data.title}</a>
+        <a href={`/talks/${talk.data.slug}`}>
+          <span class="item-icon">🗣️</span>
+          {talk.data.title}
+        </a>
         <span class="item-date">{formatDate(talk.data.date)}</span>
       </li>
     ))}
@@ -88,6 +105,7 @@ const volunteering = [
       <div class="cert-item">
         <img src={cert.image} alt={cert.name} loading="lazy" />
         <span class="cert-name">{cert.name}</span>
+        <a href={cert.url} target="_blank" rel="noopener" class="cert-link">View Certificate</a>
       </div>
     ))}
   </div>
@@ -106,11 +124,14 @@ const volunteering = [
   </div>
 
   <h2 class="section-heading">Volunteering</h2>
-  <div class="vol-list">
-    {volunteering.map(v => (
-      <div class="vol-item">
-        <strong>{v.name}</strong><br />{v.detail}
-      </div>
-    ))}
+  <div class="vol-grid">
+    <div class="vol-item">
+      <p><strong>She Codes</strong> · <a href="https://shecodes.com.au" target="_blank" rel="noopener">Website</a></p>
+      <p>In my free time I love mentoring and volunteering my time to helping others grow, volunteering my time with the <strong>She Codes Plus</strong> program.</p>
+    </div>
+    <div class="vol-item">
+      <p><strong>DDD Perth</strong> · <a href="https://github.com/dddwa/dddperth-website" target="_blank" rel="noopener">Github Repo</a> · <a href="https://dddperth.com/" target="_blank" rel="noopener">Website</a></p>
+      <p>Before the 2018 DDD Conference in Perth, I was asked to provide an external accessibility audit of the main conference website. I made several recommendations to improve the inclusiveness of the design.</p>
+    </div>
   </div>
 </BaseLayout>
