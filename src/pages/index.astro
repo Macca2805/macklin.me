@@ -40,7 +40,7 @@ const experience = [
   },
   {
     logo: '/images/exp-logo-8.png',
-    company: 'VGW',
+    company: 'Virtual Gaming Worlds',
     roles: 'Engineering Manager (March 2021 – March 2023)\nSenior Software Engineer (Jun 2019 – March 2021)\nSoftware Engineer (May 2018 – Jun 2019)',
   },
   {
@@ -50,7 +50,7 @@ const experience = [
   },
   {
     logo: '/images/exp-logo-10.png',
-    company: 'NEC',
+    company: 'NEC Australia',
     roles: 'Software Developer (September 2012 – September 2016)',
   },
 ];
@@ -104,11 +104,12 @@ const experience = [
   <h2 class="section-heading">Certification</h2>
   <div class="certs-grid">
     {certifications.map(cert => (
+        <a href={cert.url} target="_blank" rel="noopener" class="cert-link">
       <div class="cert-item">
-        <img src={cert.image} alt={cert.name} loading="lazy" />
-        <span class="cert-name">{cert.name}</span>
-        <a href={cert.url} target="_blank" rel="noopener" class="cert-link">View Certificate</a>
+          <img src={cert.image} alt={cert.name} loading="lazy" />
+          <span class="cert-name">{cert.name}</span>
       </div>
+        </a>
     ))}
   </div>
 
