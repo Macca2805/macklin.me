@@ -566,3 +566,7 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+code {
+  color: var(--color-text-secondary);
+}

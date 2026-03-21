@@ -95,8 +95,10 @@ At the end of the user setup you will be able to copy the **Access Key ID** and 
 
 Use `aws configure` to set up a profile for managing resources in the **Development** environment and when prompted, enter the **Access Key ID** and **Secret Access Key** from before:
 
-```bash
-**$ aws configure --profile dev** AWS Access Key ID [None]: *********************
+```
+$ aws configure --profile dev
+
+AWS Access Key ID [None]: *********************
 AWS Secret Access Key [None]: ***************************************
 Default region name [None]: us-west-1
 Default output format [None]: json
@@ -104,8 +106,10 @@ Default output format [None]: json
 
 Check your configuration using `aws iam list-access-keys` and confirm the expected output:
 
-```bash
-**$ aws iam list-access-keys --profile dev** {
+```
+$ aws iam list-access-keys --profile dev
+
+{
     "AccessKeyMetadata": [
         {
             "UserName": "dev",
@@ -119,15 +123,18 @@ Check your configuration using `aws iam list-access-keys` and confirm the expect
 
 Repeat the above steps for the **Production** account, retrieving your **Access Key ID** and **Secret Access Key** from the AWS console in the **Production** account.
 
-```bash
-**$ aws configure --profile prod** AWS Access Key ID [None]: *********************
+```
+$ aws configure --profile prod
+
+AWS Access Key ID [None]: *********************
 AWS Secret Access Key [None]: ***************************************
 Default region name [None]: us-west-1
-Default output format [None]: jso
-```
+Default output format [None]: json
 
-```bash
-**$ aws iam list-access-keys --profile prod** {
+
+$ aws iam list-access-keys --profile prod
+
+{
     "AccessKeyMetadata": [
         {
             "UserName": "prod",
@@ -172,7 +179,7 @@ Resources:
 
 Next, run the following to create a new stack using **CloudFormation**:
 
-```bash
+```
 $ aws cloudformation create-stack --template-body file://dev-dns.yml \
 	--stack-name dns --profile dev --parameters \
     ParameterKey=HostedZoneDomain,ParameterValue='dev.macklin.xyz'
@@ -190,7 +197,7 @@ Next, we're going to use the **AWS CLI** to extract the **NS records** that were
 
 Run the following in a terminal window to first retrieve the **Hosted Zone ID** for the **Development** environment:
 
-```bash
+```
 $ aws route53 list-hosted-zones-by-name \
 	--dns-name macklin.xyz. --profile dev \
 	| jq -r '.HostedZones[0].Id'
@@ -199,7 +206,7 @@ $ aws route53 list-hosted-zones-by-name \
 
 Now we'll flex some muscle with JQ to list the record sets for the **Hosted Zone**, selecting its associated **NS Records**. Run the following in a terminal window:
 
-```bash
+```
 $ aws route53 list-resource-record-sets \
 	--hosted-zone-id /hostedzone/Z095EXAMPLEGW15BTTB --profile dev \
   | jq -r '.ResourceRecordSets' | jq -r 'map(select(.Type == "NS"))' \
@@ -267,7 +274,7 @@ Resources:
 
 Run the following in a terminal window to first retrieve the **Hosted Zone ID** for the **Production** environment (this **Hosted Zone** was created on your behalf when you registered the domain):
 
-```bash
+```
 $ aws route53 list-hosted-zones-by-name \
 	--dns-name macklin.xyz. --profile prod \
 	| jq -r '.HostedZones[0].Id'
@@ -276,7 +283,7 @@ $ aws route53 list-hosted-zones-by-name \
 
 Next, run the following to create a new stack using **CloudFormation**, replacing the values such as `HostedZoneId`, `HostedZoneDomain`, `DevHostedZoneDomain`, and the four **NS Records** from before:
 
-```bash
+```
 $ aws cloudformation create-stack --template-body file://prod-dns.yml \
 	--stack-name dns --profile prod --parameters \
     ParameterKey=HostedZoneId,ParameterValue='Z095EXAMPLEGW15BTTB' \
@@ -300,7 +307,7 @@ You may know that DNS propagation can take up to 30 minutes, so now is a good ti
 
 ```shell
 $ dig dev.macklin.xyz -t NS
-...
+
 ;; ANSWER SECTION:
 dev.macklin.xyz.	172800	IN	NS	ns-1077.awsdns-06.org.
 dev.macklin.xyz.	172800	IN	NS	ns-1911.awsdns-46.co.uk.
@@ -312,7 +319,7 @@ And below is an example output for the **Production** environment, noting that t
 
 ```shell
 $ dig macklin.xyz -t NS
-...
+
 ;; ANSWER SECTION:
 macklin.xyz.		172800	IN	NS	ns-1253.awsdns-28.org.
 macklin.xyz.		172800	IN	NS	ns-129.awsdns-16.com.
