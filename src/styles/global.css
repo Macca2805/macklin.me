@@ -256,9 +256,10 @@ body {
   color: var(--color-text-secondary);
 }
 
-/* Article / blog post */
+/* Article / blog post — full bleed hero */
 .article-hero {
-  width: 100%;
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
   max-height: 400px;
   object-fit: cover;
   display: block;
@@ -395,14 +396,14 @@ body {
   .content-list-item { flex-direction: column; gap: 0.25rem; }
 }
 
-/* Hero section */
+/* Hero section — full bleed, breaks out of container */
 .hero-section {
   position: relative;
-  width: calc(100% + 4rem);
-  margin-left: -2rem;
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
   margin-top: -2rem;
   margin-bottom: 0;
-  padding-bottom: 56px; /* space for the overlapping headshot */
+  padding-bottom: 56px; /* space for overlapping headshot */
 }
 
 .hero-banner {
@@ -414,8 +415,8 @@ body {
 
 .hero-headshot-wrap {
   position: absolute;
-  bottom: -48px;
-  left: 2rem;
+  bottom: -48px; /* half of 96px headshot = sits 50% over the banner */
+  left: max(2rem, calc(50vw - 360px + 2rem)); /* aligns with content column */
 }
 
 .hero-headshot {
@@ -532,8 +533,7 @@ body {
 
 @media (max-width: 640px) {
   .hero-section {
-    width: calc(100% + 2rem);
-    margin-left: -1rem;
+    /* 100vw approach handles mobile automatically */
   }
   .vol-grid {
     grid-template-columns: 1fr;
