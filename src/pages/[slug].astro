@@ -62,6 +62,12 @@ const metaLine = isTalk
     <div class="talk-page">
       <div class="article-header">
         <h1 class="article-title">{entry.data.title}</h1>
+        <p class="article-meta">
+          <em>
+            {metaLine}
+            {entry.data.slides && <span> · <a href={entry.data.slides} target="_blank" rel="noopener">View the slides</a></span>}
+          </em>
+        </p>
       </div>
       <div class="article-body">
         <Content />
