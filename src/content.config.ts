@@ -21,6 +21,7 @@ const talks = defineCollection({
     date: z.string(),
     hero: z.string().optional(),
     description: z.string().optional(),
+    slides: z.string().optional(),
     type: z.string().optional(),
   }),
 });
