@@ -7,13 +7,13 @@ type: "post"
 ---
 
 
-> Every deploy was green. Every pod passed its readiness probe. And every rollout still served about 15 seconds of 502s to anyone unlucky enough to be using the service at the time. This post walks through why that happens on **EKS** behind an **AWS Application Load Balancer**, and the small set of changes that took it to zero.
+> Running services on **Amazon EKS** behind an **AWS Application Load Balancer** can cause a short burst of 502 errors on every rollout, even when every pod is healthy and every deploy goes green. This post explains why it happens, how to tell whether your services are affected, and the small set of changes that fixed it.
 
 # Context
 
 A few years ago I wrote about [the Node.js application lifecycle](/understanding-and-managing-the-node-js-application-lifecycle), and how shutting an application down is just as important as starting it up. I still believe that. What I didn't appreciate at the time is that a graceful shutdown inside the process is only half the story when there is a load balancer sitting in front of it.
 
-At work we run a number of **Go** services on **Amazon EKS**, fronted by Application Load Balancers managed by the **AWS Load Balancer Controller**. A while ago I started looking into a steady trickle of 502s on one of our public APIs. They were small in number, they came in short bursts, and nothing in our deploy pipeline ever went red.
+At my place of work we run a number of **Go** services on **Amazon EKS**, fronted by Application Load Balancers managed by the **AWS Load Balancer Controller**. A while ago I started looking into a steady trickle of 502s on one of our public APIs. They were small in number, they came in short bursts, and nothing in our deploy pipeline ever went red.
 
 It turned out every single burst lined up with a rollout.
 
