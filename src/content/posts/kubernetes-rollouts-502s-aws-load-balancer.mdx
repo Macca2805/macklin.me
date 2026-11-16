@@ -1,0 +1,248 @@
+---
+title: "Why Kubernetes Rollouts Return 502s Behind an AWS Load Balancer"
+slug: "kubernetes-rollouts-502s-aws-load-balancer"
+date: "2026-10-11"
+description: "_11th October 2026 · 10 minute read_"
+type: "post"
+---
+
+
+> Every deploy was green. Every pod passed its readiness probe. And every rollout still served about 15 seconds of 502s to anyone unlucky enough to be using the service at the time. This post walks through why that happens on **EKS** behind an **AWS Application Load Balancer**, and the small set of changes that took it to zero.
+
+# Context
+
+A few years ago I wrote about [the Node.js application lifecycle](/understanding-and-managing-the-node-js-application-lifecycle), and how shutting an application down is just as important as starting it up. I still believe that. What I didn't appreciate at the time is that a graceful shutdown inside the process is only half the story when there is a load balancer sitting in front of it.
+
+At work we run a number of **Go** services on **Amazon EKS**, fronted by Application Load Balancers managed by the **AWS Load Balancer Controller**. A while ago I started looking into a steady trickle of 502s on one of our public APIs. They were small in number, they came in short bursts, and nothing in our deploy pipeline ever went red.
+
+It turned out every single burst lined up with a rollout.
+
+> ℹ️ This post assumes you are familiar with Kubernetes Deployments and readiness probes. If you have read my post on [IAM Roles for Service Accounts](/configure-access-management-amazon-eks-iam-roles-for-service-accounts-cloudformation), you'll already have the building blocks.
+
+# Two Clocks
+
+The part that took me longest to see is this. During a rollout there are two separate systems deciding whether a pod is healthy, and they don't talk to each other.
+
+1. **Kubernetes** runs the readiness probe. When it passes, the pod is marked **Ready**.
+2. **The ALB target group** runs its own health checks against the same pod. Until enough of those pass, the target is in the `initial` state and receives no traffic.
+
+Kubernetes decides when to kill the old pods using the first clock. The ALB decides where to send traffic using the second. The gap between them is your outage.
+
+Let's put some real numbers on it. On the service I was looking at:
+
+- New pods were **Ready** about 11 seconds after starting.
+- The target group needed **2 health checks, 15 seconds apart** before a target was healthy.
+- The last old pod was killed **17 seconds** before the new targets left `initial`.
+
+So for a window of a few seconds, the ALB had old targets that were shutting down and new targets it wasn't willing to use yet.
+
+# Go Makes it Worse
+
+This is where things get interesting. A typical **Go** HTTP server shuts down something like this.
+
+```go
+func main() {
+    srv := &http.Server{Addr: ":8080", Handler: routes()}
+
+    go srv.ListenAndServe()
+
+    stop := make(chan os.Signal, 1)
+    signal.Notify(stop, syscall.SIGTERM)
+    <-stop
+
+    ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+    defer cancel()
+    srv.Shutdown(ctx)
+}
+```
+
+That looks like a textbook graceful shutdown, and inside the process it is one. In-flight requests get up to 60 seconds to finish.
+
+But read the documentation for [`http.Server.Shutdown`](https://pkg.go.dev/net/http#Server.Shutdown) closely:
+
+> Shutdown works by first closing all open listeners, then closing all idle connections, and then waiting indefinitely for connections to return to idle and then shut down.
+
+The listener is closed the moment `SIGTERM` arrives. Any **new** connection after that point is refused.
+
+Meanwhile, Kubernetes sends `SIGTERM` and removes the pod from the Service endpoints at roughly the same time. The AWS Load Balancer Controller notices the endpoint change and deregisters the target, but that takes a few seconds to reach the ALB. During those seconds the ALB still thinks the old pod is a perfectly good target, opens a connection, gets refused, and returns a **502** to the client.
+
+Two clocks that disagree, plus a server that slams the door immediately. Put them together and you get about 15 seconds of continuous 502s on every deploy.
+
+# The Variable That Decides Everything: Target Type
+
+Before fixing anything, it's worth knowing whether a service is even exposed to this. The answer lives in the `TargetGroupBinding` (or the `alb.ingress.kubernetes.io/target-type` annotation on your Ingress).
+
+```bash
+$ kubectl get targetgroupbindings -A \
+    -o custom-columns=NAME:.metadata.name,TYPE:.spec.targetType
+```
+
+## `ip` Targets
+
+Pods are registered with the target group directly. The ALB sends traffic straight to the pod IP.
+
+This means target health check lag **is** the outage window. Full exposure.
+
+## `instance` Targets
+
+Nodes are registered with the target group, and traffic flows ALB → NodePort → kube-proxy → pod. A pod rollout never deregisters a target, because the target is the node.
+
+You can still see a handful of 502s from keep-alive connections that land on a pod which is on its way out, but you won't get 15 seconds of them.
+
+In our case only one service in each cluster used `ip` targets, and of course it was the public one.
+
+# The Fix
+
+The fix ended up being four small changes in the Deployment, plus one label on the namespace.
+
+## 1. Keep Serving While the ALB Catches Up
+
+A `preStop` hook runs **before** the container receives `SIGTERM`. If it sleeps, the pod keeps serving traffic while the ALB finishes deregistering it.
+
+```yaml
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 25
+```
+
+> ℹ️ The built-in `sleep` action is available from Kubernetes 1.30. On older clusters you need `exec: { command: ["sleep", "25"] }`, which means you need a `sleep` binary in your image. Distroless images don't have one.
+
+For `ip` targets I found 15 seconds was not quite enough. 25 seconds was.
+
+## 2. Give the Pod Enough Time to Finish
+
+The grace period has to cover the `preStop` sleep **and** the time your server is allowed to drain. If it doesn't, the kubelet sends `SIGKILL` part way through your graceful shutdown.
+
+```yaml
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 90
+```
+
+25 seconds of sleep plus a 60 second `Shutdown` timeout is 85 seconds. 90 gives a little room.
+
+## 3. Make Kubernetes Wait for the ALB
+
+This is the part that actually closes the gap between the two clocks. The AWS Load Balancer Controller can inject a **pod readiness gate**. With it, a new pod isn't considered Ready until its ALB target is healthy.
+
+Turn it on by labelling the namespace.
+
+```bash
+$ kubectl label namespace my-app elbv2.k8s.aws/pod-readiness-gate-inject=enabled
+```
+
+New pods in that namespace get an extra readiness gate, and the rollout waits on it before killing anything old. You can watch it flip with `-o wide`.
+
+```bash
+$ kubectl get pods -o wide
+
+NAME                     READY   STATUS    ...   READINESS GATES
+my-app-7d9f8c-abcde      1/1     Running   ...   0/1
+my-app-7d9f8c-fghij      1/1     Running   ...   1/1
+```
+
+The first pod's container is up, but the ALB hasn't marked its target healthy yet, so Kubernetes leaves the old pods alone.
+
+> ❗ **Warning:** Readiness gates only make sense for `ip` targets. With `instance` targets there is no per-pod target to wait for.
+
+## 4. Never Go Below Full Capacity
+
+```yaml
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+```
+
+Bring one new pod up, wait for it to be properly healthy, then take one old pod down.
+
+## The Result
+
+I ran a probe against the service in a tight loop through a production rollout before and after.
+
+- **Before:** about 15 seconds of continuous 502s.
+- **After:** 1 non-200 response in 1,248 calls.
+
+A later re-test in another environment gave 747 calls with zero failures, so that one leftover failure was intermittent rather than part of every rollout.
+
+# Three Things That Look Like the Fix (But Aren't)
+
+While working through this I tried, or was tempted by, a few things that didn't help.
+
+## Lowering the Deregistration Delay
+
+The target group's deregistration delay sounds like exactly the right knob. For `ip` targets it is part of the picture. For `instance` targets it does nothing during a rollout, because the target is a node and nodes aren't being deregistered.
+
+## Changing `maxUnavailable` From 25%
+
+The default `maxUnavailable` is 25%, and it rounds **down**. With 2 or 3 replicas, 25% is already 0. For most of our services, changing the strategy was a no-op and the `preStop` hook was doing all the work.
+
+## Trusting `helm upgrade --wait`
+
+`--wait` waits for pods to be Ready. That's the first clock. It knows nothing about the ALB, so it reports success while users are getting 502s. This is why the whole problem was invisible from our deploy pipeline.
+
+# A Bonus Footgun: `sh -c` as PID 1
+
+One of our services had this in its Dockerfile.
+
+```dockerfile
+ENTRYPOINT sh -c "gunicorn app:server --bind 0.0.0.0:8080"
+```
+
+The shell form makes `sh` PID 1. On Debian based images `sh` is `dash`, and PID 1 ignores signals it hasn't installed a handler for. So `SIGTERM` never reached `gunicorn`, and every pod sat there until the `SIGKILL` 30 seconds later. No grace period in the world helps with that.
+
+The fix is one word.
+
+```dockerfile
+ENTRYPOINT sh -c "exec gunicorn app:server --bind 0.0.0.0:8080"
+```
+
+`exec` replaces the shell with `gunicorn`, so `gunicorn` becomes PID 1 and gets the signal directly.
+
+# A Note on Measuring This
+
+I nearly went down the wrong path because of how I first measured the problem.
+
+My first attempt was to line up the ALB's `HTTPCode_ELB_502_Count` metric in **CloudWatch** against ReplicaSet creation times from `kubectl get rs`. That suggested most 502s happened **outside** of rollouts, which would have meant a second unknown cause and a much bigger job.
+
+The catch is `revisionHistoryLimit`. It defaults to 10, so Kubernetes deletes old ReplicaSets. A busy service that deploys several times a day only keeps the last 10, and every older rollout simply disappears from the data. One of our services had rolled out 92 times in 14 days. `kubectl` showed me a handful.
+
+When I counted rollouts from the **EKS audit log** instead (`verb=create` on `replicasets`), more than 90% of the 502s fell inside a rollout window.
+
+The query returned a number. The number was wrong because of retention, and it pointed at a cause that didn't exist. Always ask what your data source has already thrown away.
+
+# Summary
+
+If you run services on EKS behind an ALB with `ip` targets, there is a good chance you have this problem and your pipeline will never tell you. The checklist:
+
+- Find out which services use `ip` targets
+- Add a `preStop` sleep so pods keep serving while the ALB deregisters them
+- Set `terminationGracePeriodSeconds` higher than the sleep plus your shutdown timeout
+- Enable pod readiness gates on `ip` target namespaces
+- Use `maxSurge: 1` and `maxUnavailable: 0`
+- Make sure your process is actually PID 1 and actually receives `SIGTERM`
+
+The only recommendation I will make is the one I keep coming back to. Take the time to understand the tools you are working with, including the parts that sit between your tools. Kubernetes and the ALB were each doing exactly what they were designed to do. The outage lived in the gap between them.
+
+# References
+
+[Pod readiness gate | AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/deploy/pod_readiness_gate/)
+
+[Container Lifecycle Hooks | Kubernetes](https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/)
+
+[Pod Lifecycle: Termination of Pods | Kubernetes](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)
+
+[http.Server.Shutdown | Go Documentation](https://pkg.go.dev/net/http#Server.Shutdown)
+
+[Target groups for your Application Load Balancers | AWS](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html)
+
+[Understanding and Managing the Node.js Application Lifecycle](/understanding-and-managing-the-node-js-application-lifecycle)
