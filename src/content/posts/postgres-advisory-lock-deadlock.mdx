@@ -7,13 +7,17 @@ type: "post"
 ---
 
 
-> Our test suite stopped failing and started hanging instead. No error, no timeout, no log line. Just 18 processes waiting on each other forever, in a cycle that **PostgreSQL's** deadlock detector has no way of seeing. This post walks through how we got there, how to reproduce it in three terminal tabs, and the small change that fixed it.
+> Running database migrations from inside a parallel **Go** test suite needs some way to make sure only one migration runs at a time. A **PostgreSQL** advisory lock is a neat way to do it, but the obvious version of it can deadlock against `CREATE INDEX CONCURRENTLY`, in a way **Postgres** can't detect. This post walks through how I got there, how to reproduce the deadlock in three terminal tabs, and the small change that fixed it.
 
 # Context
 
-Most of the **Go** services I work on have integration tests that run against a real **PostgreSQL** database. Each test package runs the database migrations when it starts, so the schema is always up to date.
+I have a preference for running my **Go** tests inside a **Docker Compose** network with access to a full **PostgreSQL** instance, rather than mocking the database out. It means I'm testing at least some of the boundaries of my system, and it catches the kind of problems a mock never will: a missing index, a constraint I forgot about, a query that only works in my head.
 
-`go test` runs packages **in parallel** by default, one per CPU core. That turned out to be the start of a fairly long chain of problems, each one hiding the next.
+Not every test needs a database connection. The ones that do run the database migrations before they start, so the schema is always up to date. Day to day I use [golang-migrate](https://github.com/golang-migrate/migrate) for this.
+
+`go test` runs packages **in parallel** by default, one per CPU core. The more tests I added, the more migrations ran at the same time, and the flakier my test suite got. What I really needed was a singleton migration: the migrations run exactly once, no matter how many tests ask for them at the same moment.
+
+That turned out to be the start of a fairly long chain of problems, each one hiding the next.
 
 > ℹ️ You'll need **Docker** to follow along. Everything else runs inside the `postgres` image.
 
@@ -25,7 +29,9 @@ The first symptom was an occasional failure that looked like this.
 pq: duplicate key value violates unique constraint "pg_type_typname_nsp_index"
 ```
 
-That constraint lives in the **Postgres** system catalog. It fires when two transactions try to create the same table at the same moment. In our case, two test packages both started at once, both saw an empty database, and both tried to create the migrations tracking table.
+That constraint lives in the **Postgres** system catalog. It fires when two transactions try to create the same table at the same moment. In my case, two test packages both started at once, both saw an empty database, and both tried to create the migrations tracking table.
+
+**golang-migrate** does have locking of its own, but in my testing two processes could still race each other on the very first migration.
 
 It's easy to file this under "flaky" and hit retry. Retry even works, because by the second attempt the table exists. But a failure that reproduces three times out of three is a race, and this one happens more on a laptop with lots of cores than on a 2 CPU CI runner.
 
@@ -35,7 +41,7 @@ The quick fix is `go test -p 1`, which runs one package at a time. I didn't want
 
 **Postgres** has [advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS). They don't lock any table or row. They're just a named number that one session at a time can hold, and your application decides what it means.
 
-So the plan was: before running migrations, take advisory lock `42`. Run the migrations. Release the lock. Any other package that starts at the same time waits for the lock, then finds there is nothing left to migrate, and gets on with its tests.
+So the plan was: before calling **golang-migrate**, take advisory lock `42`. Run the migrations. Release the lock. Any other package that starts at the same time waits for the lock, then finds there is nothing left to migrate, and gets on with its tests.
 
 ```go
 const migrationLock = 42
@@ -221,10 +227,50 @@ I've come to expect this shape whenever I serialise something that used to race.
 
 There's one more thing worth calling out. The blocking version of this lock lived in a project template that several services were created from. None of them had hit it, simply because none of them had a `CONCURRENTLY` migration yet. Every one of them was a hang waiting for the first person to add one. A bug in a template is sneaky that way, because nothing ever reports it until the day it goes off.
 
+# An Alternative: Migrate Before the Tests Start
+
+There is a completely different way to solve the original problem, and it's worth mentioning because it avoids everything in this post.
+
+Instead of each test running migrations, run them **once**, before the test suite starts, using a separate step. That could be the **golang-migrate** CLI, or a tool like [Flyway](https://github.com/flyway/flyway), running as a one-off service in the same **Docker Compose** file.
+
+```yaml
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: pw
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 1s
+
+  migrate:
+    image: migrate/migrate
+    command: ["-path", "/migrations", "-database", "postgres://postgres:pw@postgres:5432/postgres?sslmode=disable", "up"]
+    volumes:
+      - ./migrations:/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tests:
+    build: .
+    command: ["go", "test", "./..."]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+```
+
+No test ever migrates, so nothing races, and there is no lock to deadlock on.
+
+The trade-off is that the tests are no longer self-contained. Running a single test straight from your editor only works if the migration step has already run against that database. The lock approach also has a bonus the up-front step doesn't: the same code protects you in production, when several replicas of a service start at once and all try to migrate.
+
+Both are reasonable. If you're starting from scratch, the up-front step is simpler, and simple is usually the right call.
+
 # Summary
 
 - `go test` runs packages in parallel, and shared database setup will race
 - An advisory lock is a good way to serialise migrations without serialising tests
+- Running migrations once before the suite starts avoids the problem entirely
 - Never wait in a blocking `pg_advisory_lock` if anything might run `CREATE INDEX CONCURRENTLY`
 - Poll with `pg_try_advisory_lock`, and always honour a context
 - If a deadlock crosses your application, the database can't help you
