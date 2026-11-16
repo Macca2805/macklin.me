@@ -7,7 +7,7 @@ type: "post"
 ---
 
 
-> For the last few months most of the code I've shipped has been written by AI agents. Lots of them, running in loops, picking up work, reviewing pull requests and writing down what they learn. This post is about what I've learned from trying to manage the loops instead of the individual sessions, and why most of it turned out to be about writing things down.
+> This post covers what I've learned from a few months of keeping a shared set of written notes and rules for the AI agents I work with. Most of the lessons came from rules I wrote that went wrong: a line that went out of date, a rule that was followed perfectly to a bad result, a rule nobody could measure, and a report I believed without checking. There's also one moment where it all worked the way I hoped.
 
 # Context
 
@@ -48,43 +48,46 @@ I've since been bitten by a smaller version of the same thing in my own instruct
 
 A rule that states a fact about the environment freezes that fact. The environment doesn't stay frozen.
 
-# Lesson 2: A Rule Only Works Where It's Read
+# Lesson 2: A Rule Can Be Followed Perfectly and Still Fail
 
-I have a loop that reviews pull requests every 15 minutes. Most of those runs find nothing to do, and every one of them was writing its own "nothing to do" entry into the daily log. One day the log had 54 entries and 48 of them were that.
+I keep a file of open questions that only I can answer. These are decisions an agent can't or shouldn't make on its own. Any session that has my attention is supposed to raise one of them with me.
 
-So I wrote a rule: if a run changes nothing, update the previous quiet entry instead of adding a new one. It was precise, it had an example, it explained why.
+One day two sessions asked me the same question 17 minutes apart. That was annoying, so I added a rule: check when an item was last raised, and don't ask again about one that is waiting for a reply.
 
-The very next run, 85 minutes later, ignored it. So did every run after that. The next day had 44 quiet entries, and the new format wasn't used once.
+Four days later every item in the file was waiting for a reply. A session read the file, applied the rule correctly, and wrote down that there was nothing to raise. Nothing was raised for two days. This was a file whose entire purpose was to make sure things got raised, and one of the items had a deadline running.
 
-The rule was fine. I'd put it in the file that describes the review loop, and the loop only reads that file when it starts up. It never saw the change. Moving the exact same words into the instructions file that every session loads fixed it straight away.
+The duplicate question cost me a few seconds. The silence cost two days.
 
-Before writing a rule for an agent, work out how that agent actually gets its instructions. Then put the rule there.
+The test I use now for any rule shaped like "don't do X" is to ask: **if an agent obeys this perfectly, every single time, what does it end up doing?** If the answer is "nothing", the rule needs a floor. Here the fix was a time limit. If an item has been waiting for more than a day, ask again, and say it's the second time.
 
-# Lesson 3: Measure Whether the Rule Worked
+# Lesson 3: If You Can't Measure a Rule, It's a Suggestion
 
-This is my favourite one, because I got it wrong twice.
+I don't like comments in code that explain what the code already says. Agents love writing them. I have asked agents to write fewer comments more times than I'd like to admit. Eight, by the count in my notes, and by the eighth I was not being polite about it.
 
-The quiet entry rule worked well until there were several agents writing to the same log at the same time. If another agent had written something since my review loop's last quiet entry, updating that entry meant editing the middle of the file, and another rule says the log is append only. Two rules, no way to obey both.
+The rule was in the instructions file the whole time. It said to keep comments to a minimum and match the comment density of the surrounding code. Then an agent working in a module with very heavily commented code read that, reasoned that dense neighbours meant dense comments were fine, and produced two pull requests where 16% and 15% of the added lines were comments. It followed the rule. The rule just allowed it.
 
-So I added a third rule: if someone else has written since, start one fresh quiet entry. That seemed reasonable.
+A ninth "please write fewer comments" wasn't going to fix that. A number did. The rule now says added comment lines must be under about 10% of all added lines, that the limit is absolute no matter what the neighbouring code looks like, and it includes the two commands to measure it before opening a pull request.
 
-On a busy evening, another session wrote something between **every** review run. The log for that day had 20 quiet entries, and 17 of them said "1 consecutive". Every agent followed the rule to the letter, and the result was exactly the noise the rule was meant to stop.
+```sh
+git diff main --numstat -- '*.go' '*.ts' | awk '{a+=$1} END {print a}'
+git diff main -- '*.go' '*.ts' | grep -E "^\+" | grep -vE "^\+\+\+" | grep -cE "^\+\s*(//|/\*|\*)"
+```
 
-The version that works now says you may always update your own quiet entry wherever it sits in the file, because that doesn't reorder anything or touch anyone else's work. I only found the problem because the dream cycle counts entries and compares days. If I'd written the rule and moved on, I'd still think it was working.
+Those two pull requests came down to about 3% after a cleanup. Around 375 comment lines were deleted, and nothing they said was missed.
 
-Agents will follow a rule exactly as it's written. That is both the good news and the bad news.
+Agents still overshoot from time to time. The difference is that the agent now measures it and fixes it before I ever see the pull request.
 
 # Lesson 4: An Agent's Report Is a Claim
 
-When an agent says "done", "tests pass" or "I've addressed the review comments", that's a claim about the world, and claims can be wrong.
+When an agent says "done", "tests pass" or "nothing uses this", that's a claim about the world, and claims can be wrong.
 
-The most interesting failure here was an agent explaining something it didn't understand. A session had two stacked pull requests that hadn't been reviewed by our automated code reviewer. It checked once, and wrote down as fact that the reviewer doesn't review pull requests that aren't based on `main`.
+I used to think only reports about **changes** were risky. "I applied the change" or "the tests pass" can be wrong in ways that hurt. Reports about **reading** something felt safe.
 
-That rule doesn't exist. Both reviews arrived about six minutes later. They carried 17 findings between them, and nobody read those findings for 31 hours, because the log said there was nothing to read.
+Then an agent ran a read only audit, looking for code that depended on something we were retiring. It flagged one file, based on a match in a field name. Overnight, a different agent picked up that finding and opened a pull request deleting the code as cleanup. The field it had matched was an older, unrelated field that happened to share a few words. I caught it in review, but only because I happened to know that corner of the codebase.
 
-It got better. The next day a different session changed the base of both pull requests to `main`, saw the reviews, and wrote down that changing the base had **caused** them. The reviews were a day and a half older than the change. A wrong explanation tends to spread. The next agent finds evidence for it, because it explains what they're looking at.
+Nobody lied. The audit made a claim, the next agent treated it as a fact, and so it skipped the check it would normally have done, which was to read the code.
 
-I used to think the line was between reports about changes (risky) and reports about reading something (safe). Read only claims caused real damage too, so that line doesn't hold. The question I ask now is: **if I believe this, will I skip a check I would otherwise have run?** If the answer is yes, check it.
+So the question I ask now is: **if I believe this, will I skip a check I would otherwise have run?** If the answer is yes, check it. It doesn't matter whether the report is about a change or a read, or whether it came from an agent or from me.
 
 # Lesson 5: Sometimes It Works
 
@@ -99,8 +102,8 @@ A mistake made once, written down once, and avoided by an agent that never saw t
 - **Start with a plain folder of text.** You can make it clever later. You probably won't need to.
 - **Write down why, as well as what.** "Don't replace this constant" is a rule. "This constant exists because the table has hundreds of millions of rows" is context, and context generalises.
 - **Treat your instructions file like production code.** Review changes to it. Delete lines that are no longer true. A stale line is worse than a missing one.
-- **Know where each agent reads its instructions.** A rule in the wrong file is a rule that doesn't exist.
-- **Measure your rules.** Count the thing the rule is meant to change, and look again a week later.
+- **Ask what a rule does when it's obeyed perfectly.** If the answer is "nothing", give it a floor.
+- **Give your rules a number and a way to check it.** A rule you can't measure is a suggestion.
 - **Verify reports that would let you skip a check.** Including your own, and including the ones that sound most confident.
 
 The work hasn't gone away. A lot of it has moved from writing code to writing down what the code can't tell you, and checking that what I wrote down is still true. That turns out to be most of the job of a senior engineer anyway. It's just a lot more obvious when your team doesn't remember yesterday.
