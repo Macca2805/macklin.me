@@ -1,0 +1,233 @@
+---
+title: "Go Footguns: Comparing When You Thought You Checked"
+slug: "go-footguns-comparing"
+date: "2026-09-26"
+description: "_26th September 2026 · 8 minute read_"
+type: "post"
+---
+
+
+> Some **Go** comparisons compile and run, but compare something other than what you meant. This is the second post in a short series on **Go** footguns, and it covers four examples: comparing `time.Time` with `==`, a nil interface that isn't nil, `errors.As` with embedded types, and a missing JSON field that looks like zero.
+
+# Context
+
+In [part 1](/go-footguns-sharing) I looked at **Go** code that shares data when it looks like it makes a copy. This post covers the other group of bugs I kept finding while reviewing code written by a mix of people and AI coding agents: comparisons that answer a question you didn't ask.
+
+You write `==`, `!= nil` or `errors.As`, the code compiles, `go vet` is quiet, and the check runs. It just compares the container instead of what's inside it.
+
+> ℹ️ As before, each example links to the **Go Playground**. Read the output first and see if you can spot it.
+
+## Comparing Two Times With `==`
+
+**Go** lets you compare structs with `==` as long as every field is comparable. `time.Time` is a struct, so this compiles.
+
+```go
+func main() {
+    utc := time.Date(2026, 9, 26, 1, 0, 0, 0, time.UTC)
+    perth := utc.In(time.FixedZone("AWST", 8*60*60))
+
+    fmt.Println("utc   =", utc)
+    fmt.Println("perth =", perth)
+    fmt.Println("utc == perth:", utc == perth)
+}
+
+// Output:
+// utc   = 2026-09-26 01:00:00 +0000 UTC
+// perth = 2026-09-26 09:00:00 +0800 AWST
+// utc == perth: false
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/Z7tHvuBqwBJ)
+
+1am UTC and 9am in Perth are the same moment. `==` says they're not.
+
+`time.Time` holds the instant, plus a **pointer** to the time zone it should be shown in. `==` compares every field, and for the pointer it compares the address. Different time zone, different pointer, not equal. The same thing happens if one value still carries the monotonic clock reading from `time.Now()` and the other doesn't.
+
+This is exactly the shape of a bug I saw in review, with a struct of pointer fields used in an "if nothing changed, skip the update" guard. The pointers never matched, so the guard never fired. `time.Time` is the version you're far more likely to run into yourself, because it hides the pointer from you.
+
+The fix is to use the method the standard library gives you for this.
+
+```go
+fmt.Println("utc == perth:", utc == perth)
+fmt.Println("utc.Equal(perth):", utc.Equal(perth))
+
+// Output:
+// utc == perth: false
+// utc.Equal(perth): true
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/4bmTXHCIwBu)
+
+> ℹ️ The [time package documentation](https://pkg.go.dev/time#Time) calls this out directly: use `Equal`, not `==`. The same goes for using a `time.Time` as a map key, where two equal moments can end up as two different keys.
+
+## The Nil That Isn't Nil
+
+This is the most famous one on the list, and it still gets everyone eventually.
+
+```go
+type Verifier interface {
+    Verify() bool
+}
+
+type emailVerifier struct{}
+
+func (v *emailVerifier) Verify() bool { return true }
+
+func newVerifier(enabled bool) Verifier {
+    var v *emailVerifier
+    if enabled {
+        v = &emailVerifier{}
+    }
+    return v
+}
+
+func main() {
+    v := newVerifier(false)
+    fmt.Println("v == nil:", v == nil)
+    fmt.Printf("v = (%T, %v)\n", v, v)
+}
+
+// Output:
+// v == nil: false
+// v = (*main.emailVerifier, <nil>)
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/IwXr81gHUyZ)
+
+An interface value in **Go** is a pair: a **type** and a **value**. It's only `nil` when both halves are `nil`.
+
+`newVerifier(false)` returns a `nil` pointer, but the function's return type is `Verifier`, so **Go** wraps it in an interface whose type half is `*emailVerifier`. The value half is `nil`. The type half isn't. So `v == nil` is `false`, the caller's nil check passes, and the next line calls a method on a pointer that is, in fact, nil.
+
+The fix is to return a bare `nil` from any function whose return type is an interface.
+
+```go
+func newVerifier(enabled bool) Verifier {
+    if !enabled {
+        return nil
+    }
+    return &emailVerifier{}
+}
+
+// Output:
+// v == nil: true
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/SusCSoSyyTQ)
+
+> ℹ️ The [Go FAQ](https://go.dev/doc/faq#nil_error) has a whole entry on this, and it's worth reading. The question I ask in review is simple: does every `return nil` in this function return the literal `nil`, or a typed variable that happens to be nil?
+
+## `errors.As` and Embedding
+
+This one surprised me, because embedding feels like it should just work.
+
+```go
+type NotFoundError struct{ ID string }
+
+func (e NotFoundError) Error() string { return "not found: " + e.ID }
+
+type QueryError struct {
+    NotFoundError
+    Query string
+}
+
+func main() {
+    var err error = QueryError{NotFoundError{"42"}, "SELECT ..."}
+
+    var target NotFoundError
+    fmt.Println("errors.As:", errors.As(err, &target))
+    fmt.Println("err:", err)
+}
+
+// Output:
+// errors.As: false
+// err: not found: 42
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/MNok-63KyjH)
+
+`QueryError` embeds `NotFoundError`. It even prints like one, because the embedded `Error()` method is promoted. But `errors.As` doesn't look at what a type embeds. It walks the chain of errors returned by `Unwrap()` and checks the type of each one. `QueryError` has no `Unwrap()`, so the chain is one link long, and that link is a `QueryError`.
+
+If you want `errors.As` to find it, put it in the chain.
+
+```go
+func (e QueryError) Unwrap() error { return e.NotFoundError }
+
+// Output:
+// errors.As: true
+// target.ID: 42
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/LLbLjeKtB9p)
+
+The person who wrote the original code had written a test for this case, and the test caught it before it shipped. That's the happy ending, and the reason I'd always write the test.
+
+## Zero, or Missing?
+
+The last one is less about an operator and more about what a zero value can't tell you.
+
+```go
+type Order struct {
+    ID       string `json:"id"`
+    Discount int    `json:"discount"`
+}
+
+func main() {
+    var a, b Order
+    json.Unmarshal([]byte(`{"id":"a","discount":0}`), &a)
+    json.Unmarshal([]byte(`{"id":"b"}`), &b)
+
+    fmt.Println("a.Discount =", a.Discount)
+    fmt.Println("b.Discount =", b.Discount)
+}
+
+// Output:
+// a.Discount = 0
+// b.Discount = 0
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/qP2-ioDraWu)
+
+Order `a` has a discount of zero. Order `b` doesn't have a discount field at all. After unmarshalling you can't tell them apart.
+
+Most of the time that's fine. It stops being fine when you add a new field to a type that is already stored as JSON somewhere. Every record written **before** the field existed will unmarshal to `0`, and if `0` means something, every old record now claims that thing. In the case I saw, a new counter was read by a consumer as "zero means nothing new happened". Every historical record would have reported zero, when in reality the field just hadn't been invented when they were written.
+
+If "missing" and "zero" need to mean different things, use a type that can say so.
+
+```go
+type Order struct {
+    ID       string `json:"id"`
+    Discount *int   `json:"discount"`
+}
+
+// Output:
+// a.Discount = 0
+// b.Discount == nil: true
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/p5JG_oXumSz)
+
+# The Rule
+
+**On anything that isn't a plain number or string, `==`, `!= nil` and `errors.As` compare the container, not the contents.** Before you write one, ask yourself what the container is, and whether that's really what you want compared.
+
+# Catching These
+
+Like the examples in [part 1](/go-footguns-sharing), every one of these reads like correct code. A few things I've found help:
+
+- **Ask what the container is.** Before writing `==` on a struct, check whether any field is a pointer. Before writing `!= nil` on an interface, check where the value came from.
+- **Write the test for the path that matters.** The `errors.As` bug was caught by a test the author wrote for exactly that case, before it ever shipped.
+- **Think about old data.** Any time you add a field to something that is already stored, ask what the existing records will say.
+
+The only recommendation I will make is the same one I gave in part 1. Take the time to learn and understand the language you are working with, including the parts that compile without complaint.
+
+# References
+
+[time.Time | Go Documentation](https://pkg.go.dev/time#Time)
+
+[Why is my nil error value not equal to nil? | Go FAQ](https://go.dev/doc/faq#nil_error)
+
+[Working with Errors in Go 1.13 | The Go Blog](https://go.dev/blog/go1.13-errors)
+
+[Comparison operators | The Go Programming Language Specification](https://go.dev/ref/spec#Comparison_operators)
+
+[Go Footguns: Sharing When You Thought You Copied](/go-footguns-sharing)
