@@ -1,0 +1,191 @@
+---
+title: "Go Footguns: Sharing When You Thought You Copied"
+slug: "go-footguns-sharing"
+date: "2026-09-19"
+description: "_19th September 2026 · 7 minute read_"
+type: "post"
+---
+
+
+> Some **Go** code shares data with someone else when it looks like it makes a copy. This is the first post in a short series on **Go** footguns, and it covers three examples I've seen in real pull requests: maps, subslices and reused buffers. Each one comes with the smallest example I could write, and the fix.
+
+# Context
+
+In my post on [immutability in Go](/immutability-in-go) I showed that assigning a slice to a new variable doesn't copy the data underneath it. I thought I understood that pretty well. Then I spent a few weeks reviewing a lot of **Go** written by a mix of people and AI coding agents, and the same family of bugs kept turning up in slightly different clothes.
+
+They fall into two groups.
+
+1. **Sharing when you thought you copied.** You hold on to something, and someone else changes it under you.
+2. **Comparing when you thought you checked.** You write `==` or `!= nil`, and **Go** compares something other than what you had in mind.
+
+This post covers the first group. The second group is in [part 2](/go-footguns-comparing).
+
+None of these are new. But knowing about them and spotting them in a 600 line diff are two different skills. Every example compiles, passes `go vet`, and looks like the code you meant to write.
+
+> ℹ️ Each example links to the **Go Playground** so you can run it yourself. They're deliberately tiny, so read the output before you read the explanation and see if you can spot it first.
+
+## Two Names, One Map
+
+Let's start with an easy one.
+
+```go
+func main() {
+    defaults := map[string]int{"retries": 3}
+    settings := defaults
+
+    settings["retries"] = 5
+
+    fmt.Println("defaults =", defaults)
+    fmt.Println("settings =", settings)
+}
+
+// Output:
+// defaults = map[retries:5]
+// settings = map[retries:5]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/t557RSA4HmQ)
+
+A map value in **Go** is a small header pointing at the real data. Assigning it to a new variable copies the header, so `defaults` and `settings` are two names for the same map. Change one and you've changed both.
+
+The version I actually saw in a pull request was two package level variables built from the same map literal, one of which was later modified at startup. Every test passed because no test checked the other variable.
+
+The fix is to say you want a copy.
+
+```go
+settings := maps.Clone(defaults)
+
+// Output:
+// defaults = map[retries:3]
+// settings = map[retries:5]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/QenbNi-tfT2)
+
+> ℹ️ `maps.Clone` is a **shallow** copy. If your map values are themselves maps, slices or pointers, those are still shared.
+
+## The Subslice That Leaks Its Tail
+
+This one is subtle enough that it survived local testing, CI and a human review.
+
+```go
+var scores = []int{90, 80, 70, 60}
+
+func topTwo() []int {
+    return scores[:2]
+}
+
+func main() {
+    mine := topTwo()
+    mine = append(mine, 100)
+
+    fmt.Println("mine   =", mine)
+    fmt.Println("scores =", scores)
+}
+
+// Output:
+// mine   = [90 80 100]
+// scores = [90 80 100 60]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/c44HEcp_vGb)
+
+The caller never touched `scores`, and yet `70` is gone.
+
+A slice has three parts: a pointer to an array, a length, and a **capacity**. `scores[:2]` has a length of 2 but a capacity of 4, because there are still two elements left in the array after it. When the caller appends, `append` sees there is spare capacity and writes straight into it. That spare capacity is the rest of `scores`.
+
+In the real code, `scores` was a cache shared across requests. One request appending to its result would corrupt the answer for the next request. Under a single request in a test it looked perfect.
+
+The fix is a single character, using the three index slice expression to clamp the capacity.
+
+```go
+func topTwo() []int {
+    return scores[:2:2]
+}
+
+// Output:
+// mine   = [90 80 100]
+// scores = [90 80 70 60]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/ZG7qMLohOqL)
+
+`scores[:2:2]` means "elements 0 to 2, with a capacity of 2". Now there is no spare room, so `append` has to allocate a new array and leaves `scores` alone.
+
+## The Buffer That Gets Reused
+
+The standard library has a few performance options that trade safety for fewer allocations. `csv.Reader.ReuseRecord` is one of them.
+
+```go
+func main() {
+    r := csv.NewReader(strings.NewReader("alice,1\nbob,2\n"))
+    r.ReuseRecord = true
+
+    var rows [][]string
+    for {
+        row, err := r.Read()
+        if err != nil {
+            break
+        }
+        rows = append(rows, row)
+    }
+
+    fmt.Println(rows)
+}
+
+// Output:
+// [[bob 2] [bob 2]]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/8pTlOLhhDb9)
+
+Where did Alice go?
+
+With `ReuseRecord` turned on, every call to `Read` returns the **same** backing slice with new contents. Storing it stores a reference to a buffer that the next `Read` overwrites. By the end, every row in `rows` points at the same buffer, which holds whatever was read last.
+
+The real version of this was a streaming join over a file several gigabytes in size. With a small input it was fine, because the bug only shows up once you keep a row past the next read. With the real input the output was quietly wrong.
+
+If you want to keep the row, copy it.
+
+```go
+rows = append(rows, slices.Clone(row))
+
+// Output:
+// [[alice 1] [bob 2]]
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/veQo0T6Wztr)
+
+Or just don't turn on `ReuseRecord` unless a profiler has told you to.
+
+# The Rule
+
+**If you keep it past the moment you got it, clone it.** That covers maps, slices you got from someone else, and buffers from the standard library. `maps.Clone`, `slices.Clone` and `x[:n:n]` are your friends.
+
+# Why These Keep Happening
+
+I don't think any of these are **Go** being badly designed. Each one has a sensible reason behind it: cheap copies and no hidden allocations. The language does exactly what it says it will.
+
+The trouble is that each example reads like the code you meant to write. That makes them hard to catch in review, and almost impossible to catch with a small, single threaded unit test.
+
+A few things I've found genuinely help:
+
+- **Test the caller, not just the function.** For the subslice bug, a test that only checked `len(topTwo())` would pass. A test that appends to the result and then reads the original would fail.
+- **Test with realistic input.** The CSV bug needed more than one row. Plenty of real bugs need more than one request at a time.
+- **Pay attention to AI review comments on these specific shapes.** I'm not usually one to trust an automated reviewer, but on this family of bugs it was right far more often than it was wrong. All three of the examples in this post were first flagged by one.
+
+In [part 2](/go-footguns-comparing) I'll look at the other half: comparisons that compile, run, and answer a question you didn't ask.
+
+The only recommendation I will make is the same one I gave last time. Take the time to learn and understand the language you are working with, including the parts that compile without complaint.
+
+# References
+
+[Go Slices: usage and internals | The Go Blog](https://go.dev/blog/slices-intro)
+
+[Full slice expressions | The Go Programming Language Specification](https://go.dev/ref/spec#Slice_expressions)
+
+[maps.Clone | Go Documentation](https://pkg.go.dev/maps#Clone)
+
+[encoding/csv Reader.ReuseRecord | Go Documentation](https://pkg.go.dev/encoding/csv#Reader)
+
+[Immutability in Go](/immutability-in-go)
