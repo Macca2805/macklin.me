@@ -1,0 +1,116 @@
+---
+title: "Climbing the Abstraction Ladder with AI Agents"
+slug: "climbing-the-abstraction-ladder"
+date: "2026-11-14"
+description: "_14th November 2026 · 9 minute read_"
+type: "post"
+---
+
+
+> For the last few months most of the code I've shipped has been written by AI agents. Lots of them, running in loops, picking up work, reviewing pull requests and writing down what they learn. This post is about what I've learned from trying to manage the loops instead of the individual sessions, and why most of it turned out to be about writing things down.
+
+# Context
+
+Earlier this year I noticed I was spending most of my day as a very expensive copy and paste machine. I'd open an agent session, explain the codebase, explain the conventions, explain why a particular thing is the way it is, and then ask for the change. The next day I'd open a new session and explain all of it again.
+
+The goal I set myself was to climb one rung up the abstraction ladder. Instead of directing each session, I wanted to describe where our architecture needed to go, and have agents plan and do the work themselves, with me able to step in whenever I needed to.
+
+I want to be clear that my worry was never really about whether the agents were capable. They're very capable. My worry was the code they were working in. Like most codebases that have been around a while, ours is full of decisions that made sense at the time and aren't written down anywhere.
+
+The example I keep coming back to: an agent was asked to tidy up some code and found a number that had been hardcoded. It did the sensible thing and replaced it with a query that calculated the real value. What it couldn't know was that the table behind that query had hundreds of millions of rows, and the number was hardcoded on purpose. Nothing in the code said so. A perfectly reasonable change, made with perfectly reasonable logic, took the service down.
+
+A new human engineer would have made exactly the same change. What was missing was **context**.
+
+> ℹ️ I use a few different agent tools day to day. Nothing in this post is specific to one of them, and I'm deliberately not going to talk about the details of the systems we build at work.
+
+# The Setup
+
+The core of what I built is boring, which I think is a good thing. It's a folder of **Markdown** files that every agent tool I use reads and writes.
+
+- **One instructions file.** It's the single source of truth for all of the tools, and each tool's expected location is a symlink to it. Every session loads it, every time.
+- **A daily log.** Every session appends what it did, what it decided and why, with a timestamp.
+- **Lessons.** Short notes about things that went wrong, why they went wrong, and the rule that would have prevented it.
+- **A "dream" cycle.** A scheduled agent reads the raw daily logs and looks for patterns. Anything that turns up three or more times gets promoted into a lesson. It also writes a short diary entry about what it noticed.
+
+That's it. No vector database, no clever retrieval. The instructions file links out to the lessons by topic, so an agent about to touch, say, **Terraform** knows which notes to open first.
+
+Over a few months this grew to a couple of hundred lessons. And the lessons themselves taught me a fair bit about how agents actually use what you give them.
+
+# Lesson 1: A Wrong Line Is Worse Than No Line
+
+If an instruction file is **missing** something, an agent falls back to reading the code. That costs some time and tokens, but the code is the truth, so it usually gets to the right answer.
+
+If an instruction file says something **wrong**, the agent doesn't fall back to anything. It trusts the file, because saving that effort is the whole reason the file exists.
+
+I found this out when tracking down a bug where a page did a full navigation after a user signed in, losing their place. The fix was easy. The interesting part was **why** the bug existed. The project's instructions file said, in plain words, that after signing in the page had to navigate to a new URL. That wasn't true. But whoever wrote the buggy code had followed the instruction faithfully. The documentation was the reason the bug was there.
+
+I've since been bitten by a smaller version of the same thing in my own instructions file. I wrote a line saying all log timestamps were in a particular time zone. Four days later my laptop was in a different time zone, and the line was wrong. I corrected it to name a boundary. That was wrong too, and so were the next three attempts. The version that finally stuck doesn't name a time zone at all. It tells the agent to run `date` and find out.
+
+A rule that states a fact about the environment freezes that fact. The environment doesn't stay frozen.
+
+# Lesson 2: A Rule Only Works Where It's Read
+
+I have a loop that reviews pull requests every 15 minutes. Most of those runs find nothing to do, and every one of them was writing its own "nothing to do" entry into the daily log. One day the log had 54 entries and 48 of them were that.
+
+So I wrote a rule: if a run changes nothing, update the previous quiet entry instead of adding a new one. It was precise, it had an example, it explained why.
+
+The very next run, 85 minutes later, ignored it. So did every run after that. The next day had 44 quiet entries, and the new format wasn't used once.
+
+The rule was fine. I'd put it in the file that describes the review loop, and the loop only reads that file when it starts up. It never saw the change. Moving the exact same words into the instructions file that every session loads fixed it straight away.
+
+Before writing a rule for an agent, work out how that agent actually gets its instructions. Then put the rule there.
+
+# Lesson 3: Measure Whether the Rule Worked
+
+This is my favourite one, because I got it wrong twice.
+
+The quiet entry rule worked well until there were several agents writing to the same log at the same time. If another agent had written something since my review loop's last quiet entry, updating that entry meant editing the middle of the file, and another rule says the log is append only. Two rules, no way to obey both.
+
+So I added a third rule: if someone else has written since, start one fresh quiet entry. That seemed reasonable.
+
+On a busy evening, another session wrote something between **every** review run. The log for that day had 20 quiet entries, and 17 of them said "1 consecutive". Every agent followed the rule to the letter, and the result was exactly the noise the rule was meant to stop.
+
+The version that works now says you may always update your own quiet entry wherever it sits in the file, because that doesn't reorder anything or touch anyone else's work. I only found the problem because the dream cycle counts entries and compares days. If I'd written the rule and moved on, I'd still think it was working.
+
+Agents will follow a rule exactly as it's written. That is both the good news and the bad news.
+
+# Lesson 4: An Agent's Report Is a Claim
+
+When an agent says "done", "tests pass" or "I've addressed the review comments", that's a claim about the world, and claims can be wrong.
+
+The most interesting failure here was an agent explaining something it didn't understand. A session had two stacked pull requests that hadn't been reviewed by our automated code reviewer. It checked once, and wrote down as fact that the reviewer doesn't review pull requests that aren't based on `main`.
+
+That rule doesn't exist. Both reviews arrived about six minutes later. They carried 17 findings between them, and nobody read those findings for 31 hours, because the log said there was nothing to read.
+
+It got better. The next day a different session changed the base of both pull requests to `main`, saw the reviews, and wrote down that changing the base had **caused** them. The reviews were a day and a half older than the change. A wrong explanation tends to spread. The next agent finds evidence for it, because it explains what they're looking at.
+
+I used to think the line was between reports about changes (risky) and reports about reading something (safe). Read only claims caused real damage too, so that line doesn't hold. The question I ask now is: **if I believe this, will I skip a check I would otherwise have run?** If the answer is yes, check it.
+
+# Lesson 5: Sometimes It Works
+
+I don't want to make this sound like a list of disasters, so here's the moment that convinced me the whole thing was worth it.
+
+A few weeks in, I was reading through the output of a subagent working on an unrelated fix. Before stating a conclusion, it stopped to verify it, and cited one of the lessons by name as the reason. That lesson had been written by a different session, weeks earlier, about a different problem. This agent had never been part of that conversation. It had only ever seen the lesson in the notes.
+
+A mistake made once, written down once, and avoided by an agent that never saw the original mistake. That's the entire point.
+
+# What I'd Tell Someone Starting Out
+
+- **Start with a plain folder of text.** You can make it clever later. You probably won't need to.
+- **Write down why, as well as what.** "Don't replace this constant" is a rule. "This constant exists because the table has hundreds of millions of rows" is context, and context generalises.
+- **Treat your instructions file like production code.** Review changes to it. Delete lines that are no longer true. A stale line is worse than a missing one.
+- **Know where each agent reads its instructions.** A rule in the wrong file is a rule that doesn't exist.
+- **Measure your rules.** Count the thing the rule is meant to change, and look again a week later.
+- **Verify reports that would let you skip a check.** Including your own, and including the ones that sound most confident.
+
+The work hasn't gone away. A lot of it has moved from writing code to writing down what the code can't tell you, and checking that what I wrote down is still true. That turns out to be most of the job of a senior engineer anyway. It's just a lot more obvious when your team doesn't remember yesterday.
+
+The only recommendation I will make is to take the time to learn and understand the tools you are working with. Agents are tools too, and the ones I work with read every word I write down. That's worth taking seriously.
+
+# References
+
+[AGENTS.md](https://agents.md/)
+
+[Classes in TypeScript](/classes-in-typescript)
+
+[Immutability in Go](/immutability-in-go)
