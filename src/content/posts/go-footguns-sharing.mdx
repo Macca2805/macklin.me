@@ -29,14 +29,18 @@ None of these are new. But knowing about them and spotting them in a 600 line di
 Let's start with an easy one.
 
 ```go
+package main
+
+import "fmt"
+
+var defaults = map[string]int{"retries": 3}
+
 func main() {
-    defaults := map[string]int{"retries": 3}
-    settings := defaults
+	settings := defaults
+	settings["retries"] = 5
 
-    settings["retries"] = 5
-
-    fmt.Println("defaults =", defaults)
-    fmt.Println("settings =", settings)
+	fmt.Println("defaults =", defaults)
+	fmt.Println("settings =", settings)
 }
 
 // Output:
@@ -44,7 +48,7 @@ func main() {
 // settings = map[retries:5]
 ```
 
-[Run in Go Playground ↗](https://go.dev/play/p/t557RSA4HmQ)
+[Run in Go Playground ↗](https://go.dev/play/p/EGomOvQeXXA)
 
 A map value in **Go** is a small header pointing at the real data. Assigning it to a new variable copies the header, so `defaults` and `settings` are two names for the same map. Change one and you've changed both.
 
@@ -60,7 +64,7 @@ settings := maps.Clone(defaults)
 // settings = map[retries:5]
 ```
 
-[Run in Go Playground ↗](https://go.dev/play/p/QenbNi-tfT2)
+[Run in Go Playground ↗](https://go.dev/play/p/l8veJpn5GhT)
 
 > ℹ️ `maps.Clone` is a **shallow** copy. If your map values are themselves maps, slices or pointers, those are still shared.
 
