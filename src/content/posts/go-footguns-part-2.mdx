@@ -1,6 +1,6 @@
 ---
-title: "Go Footguns: Comparing When You Thought You Checked"
-slug: "go-footguns-comparing"
+title: "Go Footguns: Part 2"
+slug: "go-footguns-part-2"
 date: "2026-09-26"
 description: "_26th September 2026 · 8 minute read_"
 type: "post"
@@ -11,7 +11,7 @@ type: "post"
 
 # Context
 
-In [part 1](/go-footguns-sharing) I looked at **Go** code that shares data when it looks like it makes a copy. This post covers the other group of bugs I kept finding while reviewing code written by a mix of people and AI coding agents: comparisons that answer a question you didn't ask.
+In [part 1](/go-footguns-part-1) I looked at **Go** code that shares data when it looks like it makes a copy. This post covers the other group of bugs I kept finding while reviewing code written by a mix of people and AI coding agents: comparisons that answer a question you didn't ask.
 
 You write `==`, `!= nil` or `errors.As`, the code compiles, `go vet` is quiet, and the check runs. It just compares the container instead of what's inside it.
 
@@ -212,7 +212,7 @@ type Order struct {
 
 # Catching These
 
-Like the examples in [part 1](/go-footguns-sharing), every one of these reads like correct code. A few things I've found help:
+Like the examples in [part 1](/go-footguns-part-1), every one of these reads like correct code. A few things I've found help:
 
 - **Ask what the container is.** Before writing `==` on a struct, check whether any field is a pointer. Before writing `!= nil` on an interface, check where the value came from.
 - **Write the test for the path that matters.** The `errors.As` bug was caught by a test the author wrote for exactly that case, before it ever shipped.
@@ -230,4 +230,4 @@ The only recommendation I will make is the same one I gave in part 1. Take the t
 
 [Comparison operators | The Go Programming Language Specification](https://go.dev/ref/spec#Comparison_operators)
 
-[Go Footguns: Sharing When You Thought You Copied](/go-footguns-sharing)
+[Go Footguns: Part 1](/go-footguns-part-1)
