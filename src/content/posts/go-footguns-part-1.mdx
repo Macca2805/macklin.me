@@ -1,6 +1,6 @@
 ---
-title: "Go Footguns: Sharing When You Thought You Copied"
-slug: "go-footguns-sharing"
+title: "Go Footguns: Part 1"
+slug: "go-footguns-part-1"
 date: "2026-09-19"
 description: "_19th September 2026 · 7 minute read_"
 type: "post"
@@ -18,7 +18,7 @@ They fall into two groups.
 1. **Sharing when you thought you copied.** You hold on to something, and someone else changes it under you.
 2. **Comparing when you thought you checked.** You write `==` or `!= nil`, and **Go** compares something other than what you had in mind.
 
-This post covers the first group. The second group is in [part 2](/go-footguns-comparing).
+This post covers the first group. The second group is in [part 2](/go-footguns-part-2).
 
 None of these are new. But knowing about them and spotting them in a 600 line diff are two different skills. Every example compiles, passes `go vet`, and looks like the code you meant to write.
 
@@ -178,7 +178,7 @@ A few things I've found genuinely help:
 - **Test with realistic input.** The CSV bug needed more than one row. Plenty of real bugs need more than one request at a time.
 - **Pay attention to AI review comments on these specific shapes.** I'm not usually one to trust an automated reviewer, but on this family of bugs it was right far more often than it was wrong. All three of the examples in this post were first flagged by one.
 
-In [part 2](/go-footguns-comparing) I'll look at the other half: comparisons that compile, run, and answer a question you didn't ask.
+In [part 2](/go-footguns-part-2) I'll look at the other half: comparisons that compile, run, and answer a question you didn't ask.
 
 The only recommendation I will make is the same one I gave last time. Take the time to learn and understand the language you are working with, including the parts that compile without complaint.
 
