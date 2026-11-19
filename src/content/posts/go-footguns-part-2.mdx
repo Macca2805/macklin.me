@@ -1,0 +1,312 @@
+---
+title: "Go Footguns: Part 2"
+slug: "go-footguns-part-2"
+date: "2026-09-26"
+hero: "/images/go-footguns-part-2-hero.jpg"
+description: "_26th September 2026 · 10 minute read_"
+type: "post"
+---
+
+
+> Some **Go** comparisons compile and run, but compare something other than what you meant. This is the second post in a short series on **Go** footguns, and it covers four examples: comparing errors with `==`, `errors.As` with embedded types, a nil interface that isn't nil, and a missing JSON field that looks like zero.
+
+# Context
+
+In [part 1](/go-footguns-part-1) I looked at **Go** code that shares data when it looks like it makes a copy. This post covers the other group of bugs I kept finding while reviewing code written by a mix of people and AI coding agents: comparisons that answer a question you didn't ask.
+
+You write `==`, `!= nil` or `errors.As`, the code compiles, `go vet` is quiet, and the check runs. It just compares the container instead of what's inside it.
+
+> ℹ️ As before, each example links to the **Go Playground**. Read the output first and see if you can spot it.
+
+## Comparing Errors With `==`
+
+Sentinel errors are package level values like `io.EOF` or `sql.ErrNoRows`, and for a long time the way to check for one was `==`. It still compiles.
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+var ErrNotFound = errors.New("not found")
+
+func findUser(id string) error {
+	return fmt.Errorf("find user %s: %w", id, ErrNotFound)
+}
+
+func main() {
+	err := findUser("42")
+
+	fmt.Println("err:", err)
+	fmt.Println("err == ErrNotFound:", err == ErrNotFound)
+}
+
+// Output:
+// err: find user 42: not found
+// err == ErrNotFound: false
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/EtAFSeVri0k)
+
+The error message even says "not found". `==` says it isn't.
+
+`fmt.Errorf` with `%w` wraps the original error in a new one so it can add some context to the message. `==` compares the outer error, which is a brand new value, so it never matches `ErrNotFound`.
+
+What makes this one nasty is that the check was correct when it was written. It breaks later, when someone adds `%w` to a `return` in a different function, sometimes in a different package, to make the logs easier to read. Nothing fails to compile, and the `if err == ErrNotFound` branch quietly stops running.
+
+The fix is `errors.Is`, which walks the chain of wrapped errors looking for a match.
+
+```go
+fmt.Println("err == ErrNotFound:", err == ErrNotFound)
+fmt.Println("errors.Is(err, ErrNotFound):", errors.Is(err, ErrNotFound))
+
+// Output:
+// err == ErrNotFound: false
+// errors.Is(err, ErrNotFound): true
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/noCShT5vcGk)
+
+> ℹ️ The [errorlint](https://github.com/polyfloyd/go-errorlint) linter flags `==` comparisons on errors, and it's included in **golangci-lint**. `go vet` won't catch it.
+
+## `errors.As` and Embedding
+
+`errors.Is` has a sibling, `errors.As`, which looks for an error by its type instead of its value. This one surprised me, because embedding feels like it should just work.
+
+```go
+type NotFoundError struct{ ID string }
+
+func (e NotFoundError) Error() string { return "not found: " + e.ID }
+
+type QueryError struct {
+    NotFoundError
+    Query string
+}
+
+func main() {
+    var err error = QueryError{NotFoundError{"42"}, "SELECT ..."}
+
+    var target NotFoundError
+    fmt.Println("errors.As:", errors.As(err, &target))
+    fmt.Println("err:", err)
+}
+
+// Output:
+// errors.As: false
+// err: not found: 42
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/MNok-63KyjH)
+
+`QueryError` embeds `NotFoundError`. It even prints like one, because the embedded `Error()` method is promoted. But `errors.As` doesn't look at what a type embeds. It walks the chain of errors returned by `Unwrap()` and checks the type of each one. `QueryError` has no `Unwrap()`, so the chain is one link long, and that link is a `QueryError`.
+
+If you want `errors.As` to find it, put it in the chain.
+
+```go
+func (e QueryError) Unwrap() error { return e.NotFoundError }
+
+// Output:
+// errors.As: true
+// target.ID: 42
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/LLbLjeKtB9p)
+
+The person who wrote the original code had written a test for this case, and the test caught it before it shipped. That's the happy ending, and the reason I'd always write the test.
+
+## The Nil That Isn't Nil
+
+This is the most famous one on the list, and it still gets everyone eventually.
+
+```go
+type Verifier interface {
+    Verify() bool
+}
+
+type emailVerifier struct{}
+
+func (v *emailVerifier) Verify() bool { return true }
+
+func newVerifier(enabled bool) Verifier {
+    var v *emailVerifier
+    if enabled {
+        v = &emailVerifier{}
+    }
+    return v
+}
+
+func main() {
+    v := newVerifier(false)
+    fmt.Println("v == nil:", v == nil)
+    fmt.Printf("v = (%T, %v)\n", v, v)
+}
+
+// Output:
+// v == nil: false
+// v = (*main.emailVerifier, <nil>)
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/IwXr81gHUyZ)
+
+An interface value in **Go** is a pair: a **type** and a **value**. It's only `nil` when both halves are `nil`.
+
+`newVerifier(false)` returns a `nil` pointer, but the function's return type is `Verifier`, so **Go** wraps it in an interface whose type half is `*emailVerifier`. The value half is `nil`. The type half isn't. So `v == nil` is `false`, the caller's nil check passes, and the next line calls a method on a pointer that is, in fact, nil.
+
+The bug is in that first version. Inside `newVerifier` the variable `v` really is nil, and `return v` reads exactly like `return nil`. The difference only shows up in the caller.
+
+The fix is to return a bare `nil` from any function whose return type is an interface.
+
+```go
+func newVerifier(enabled bool) Verifier {
+    if !enabled {
+        return nil
+    }
+    return &emailVerifier{}
+}
+
+// Output:
+// v == nil: true
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/SusCSoSyyTQ)
+
+> ℹ️ The [Go FAQ](https://go.dev/doc/faq#nil_error) has a whole entry on this, and it's worth reading. The question I ask in review is simple: does every `return nil` in this function return the literal `nil`, or a typed variable that happens to be nil?
+
+So what if the constructor returns the concrete type instead? Call it `newConcrete`, with the same body as the first version.
+
+```go
+func newConcrete(enabled bool) *emailVerifier {
+```
+
+Now the nil check on the result is `true` again, because there's no interface involved. The problem moves rather than going away. As soon as that pointer is stored in an interface, such as a `Verifier` field on a struct, the interface is non-nil again.
+
+```go
+c := newConcrete(false)
+fmt.Println("c == nil:", c == nil)
+
+var i Verifier = c
+fmt.Println("i == nil:", i == nil)
+
+// Output:
+// c == nil: true
+// i == nil: false
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/bTmpxG2Tndm)
+
+The version you're most likely to meet is a function that returns `error`, with a custom error type inside. That's the example the Go FAQ uses.
+
+The [ireturn](https://github.com/butuzov/ireturn) linter enforces "accept interfaces, return concrete types", and it would flag `newVerifier`. Its reasons are mostly about API design rather than this bug. Returning a concrete type does keep the trap out of the constructor, but as above, it comes back the moment the value goes into an interface. The linter that catches this one is **staticcheck**, whose [SA4023](https://staticcheck.dev/docs/checks/#SA4023) check reports `v == nil` and `i == nil` as comparisons that can never be true. `go vet` says nothing.
+
+## Zero, or Missing?
+
+The last one is more of a serialisation footgun than a **Go** one, but **Go**'s zero values make it easy to miss.
+
+```go
+type Order struct {
+    ID       string `json:"id"`
+    Discount int    `json:"discount"`
+}
+
+func main() {
+    var a, b Order
+    json.Unmarshal([]byte(`{"id":"a","discount":0}`), &a)
+    json.Unmarshal([]byte(`{"id":"b"}`), &b)
+
+    fmt.Println("a.Discount =", a.Discount)
+    fmt.Println("b.Discount =", b.Discount)
+}
+
+// Output:
+// a.Discount = 0
+// b.Discount = 0
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/qP2-ioDraWu)
+
+Order `a` has a discount of zero. Order `b` doesn't have a discount field at all. After unmarshalling you can't tell them apart.
+
+Most of the time that's fine. It stops being fine when you add a new field to a type that is already stored as JSON somewhere. Every record written **before** the field existed will unmarshal to `0`, and if `0` means something, every old record now claims that thing. In the case I saw, a new counter was read by a consumer as "zero means nothing new happened". Every historical record would have reported zero, when in reality the field just hadn't been invented when they were written.
+
+If "missing" and "zero" need to mean different things, use a type that can say so.
+
+```go
+type Order struct {
+    ID       string `json:"id"`
+    Discount *int   `json:"discount"`
+}
+
+// Output:
+// a.Discount = 0
+// b.Discount == nil: true
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/p5JG_oXumSz)
+
+There's nothing special about `int` here. Every field that's missing from the JSON gets its type's zero value, so the same question applies to all of them.
+
+```go
+type Settings struct {
+	Retries int      `json:"retries"`
+	Rate    float64  `json:"rate"`
+	Enabled bool     `json:"enabled"`
+	Name    string   `json:"name"`
+	Initial rune     `json:"initial"`
+	Tags    []string `json:"tags"`
+	Limit   *int     `json:"limit"`
+}
+
+// Unmarshalling {} gives:
+// retries = 0
+// rate    = 0
+// enabled = false
+// name    = ""
+// initial = 0
+// tags    = []string(nil)
+// limit   = <nil>
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/bfSGg7IbLEd)
+
+`bool` is the one I'd worry about most. A missing `"enabled"` field reads as `false`, and the code reading it will happily treat the feature as switched off. **Go** has no `char` type. The closest is `rune`, which is an `int32`, so it behaves like any other number.
+
+> ❗ "Missing becomes zero" only holds when you unmarshal into a fresh value. If you unmarshal into a struct that already has data in it, a missing field keeps its old value.
+
+```go
+s := Settings{Retries: 3, Name: "a"}
+json.Unmarshal([]byte(`{"name":"b"}`), &s)
+
+// Output:
+// {Retries:3 Name:b}
+```
+
+[Run in Go Playground ↗](https://go.dev/play/p/KxiSds9MyqI)
+
+# The Rule
+
+**On anything that isn't a plain number or string, `==`, `!= nil` and `errors.As` compare the container, not the contents.** Before you write one, ask yourself what the container is, and whether that's really what you want compared.
+
+# Catching These
+
+Like the examples in [part 1](/go-footguns-part-1), every one of these reads like correct code. A few things I've found help:
+
+- **Ask what the container is.** Before writing `==` on an error, ask whether it could be wrapped. Before writing `!= nil` on an interface, check where the value came from.
+- **Turn on the linters that know about these.** errorlint for `==` on errors, and staticcheck for nil comparisons that can never be true.
+- **Write the test for the path that matters.** The `errors.As` bug was caught by a test the author wrote for exactly that case, before it ever shipped.
+- **Think about old data.** Any time you add a field to something that is already stored, ask what the existing records will say.
+
+The only recommendation I will make is the same one I gave in part 1. Take the time to learn and understand the language you are working with, including the parts that compile without complaint.
+
+# References
+
+[Package errors | Go Documentation](https://pkg.go.dev/errors)
+
+[Why is my nil error value not equal to nil? | Go FAQ](https://go.dev/doc/faq#nil_error)
+
+[Working with Errors in Go 1.13 | The Go Blog](https://go.dev/blog/go1.13-errors)
+
+[Comparison operators | The Go Programming Language Specification](https://go.dev/ref/spec#Comparison_operators)
+
+[Go Footguns: Part 1](/go-footguns-part-1)
