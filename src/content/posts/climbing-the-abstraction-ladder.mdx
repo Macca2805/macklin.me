@@ -1,0 +1,120 @@
+---
+title: "Climbing the Abstraction Ladder with AI Agents"
+slug: "climbing-the-abstraction-ladder"
+date: "2026-11-14"
+hero: "/images/climbing-the-abstraction-ladder-hero.jpg"
+description: "_14th November 2026 · 9 minute read_"
+type: "post"
+---
+
+
+> This post covers what I've learned from a few months of keeping a shared set of written notes and rules for the AI agents I work with. Most of the lessons came from rules I wrote that went wrong: a line that went out of date, a rule that was followed perfectly to a bad result, a rule nobody could measure, and a report I believed without checking. There's also one moment where it all worked the way I hoped.
+
+# Context
+
+Earlier this year I noticed I was spending most of my day as a very expensive copy and paste machine. I'd open an agent session, explain the codebase, explain the conventions, explain why a particular thing is the way it is, and then ask for the change. The next day I'd open a new session and explain all of it again.
+
+The goal I set myself was to climb one rung up the abstraction ladder. Instead of directing each session, I wanted to describe where our architecture needed to go, and have agents plan and do the work themselves, with me able to step in whenever I needed to.
+
+I want to be clear that my worry was never really about whether the agents were capable. They're very capable. My worry was the code they were working in. Like most codebases that have been around a while, ours is full of decisions that made sense at the time and aren't written down anywhere.
+
+The example I keep coming back to: an agent was asked to tidy up some code and found a number that had been hardcoded. It did the sensible thing and replaced it with a query that calculated the real value. What it couldn't know was that the table behind that query had hundreds of millions of rows, and the number was hardcoded on purpose. Nothing in the code said so. A perfectly reasonable change, made with perfectly reasonable logic, took the service down.
+
+A new human engineer would have made exactly the same change. What was missing was **context**.
+
+> ℹ️ I use a few different agent tools day to day. Nothing in this post is specific to one of them, and I'm deliberately not going to talk about the details of the systems we build at work.
+
+# The Setup
+
+The core of what I built is boring, which I think is a good thing. It's a folder of **Markdown** files that every agent tool I use reads and writes.
+
+- **One instructions file.** It's the single source of truth for all of the tools, and each tool's expected location is a symlink to it. Every session loads it, every time.
+- **A daily log.** Every session appends what it did, what it decided and why, with a timestamp.
+- **Lessons.** Short notes about things that went wrong, why they went wrong, and the rule that would have prevented it.
+- **A "dream" cycle.** A scheduled agent reads the raw daily logs and looks for patterns. Anything that turns up three or more times gets promoted into a lesson. It also writes a short diary entry about what it noticed.
+
+That's it. No vector database, no clever retrieval. The instructions file links out to the lessons by topic, so an agent about to touch, say, **Terraform** knows which notes to open first.
+
+Over a few months this grew to a couple of hundred lessons. And the lessons themselves taught me a fair bit about how agents actually use what you give them.
+
+# Lesson 1: A Wrong Line Is Worse Than No Line
+
+If an instruction file is **missing** something, an agent falls back to reading the code. That costs some time and tokens, but the code is the truth, so it usually gets to the right answer.
+
+If an instruction file says something **wrong**, the agent doesn't fall back to anything. It trusts the file, because saving that effort is the whole reason the file exists.
+
+I found this out when tracking down a bug where a page did a full navigation after a user signed in, losing their place. The fix was easy. The interesting part was **why** the bug existed. The project's instructions file said, in plain words, that after signing in the page had to navigate to a new URL. That wasn't true. But whoever wrote the buggy code had followed the instruction faithfully. The documentation was the reason the bug was there.
+
+I've since been bitten by a smaller version of the same thing in my own instructions file. I wrote a line saying all log timestamps were in a particular time zone. Four days later my laptop was in a different time zone, and the line was wrong. I corrected it to name a boundary. That was wrong too, and so were the next three attempts. The version that finally stuck doesn't name a time zone at all. It tells the agent to run `date` and find out.
+
+A rule that states a fact about the environment freezes that fact. The environment doesn't stay frozen.
+
+# Lesson 2: A Rule Can Be Followed Perfectly and Still Fail
+
+I keep a file of open questions that only I can answer. These are decisions an agent can't or shouldn't make on its own. Any session that has my attention is supposed to raise one of them with me.
+
+One day two sessions asked me the same question 17 minutes apart. That was annoying, so I added a rule: check when an item was last raised, and don't ask again about one that is waiting for a reply.
+
+Four days later every item in the file was waiting for a reply. A session read the file, applied the rule correctly, and wrote down that there was nothing to raise. Nothing was raised for two days. This was a file whose entire purpose was to make sure things got raised, and one of the items had a deadline running.
+
+The duplicate question cost me a few seconds. The silence cost two days.
+
+The test I use now for any rule shaped like "don't do X" is to ask: **if an agent obeys this perfectly, every single time, what does it end up doing?** If the answer is "nothing", the rule needs a floor. Here the fix was a time limit. If an item has been waiting for more than a day, ask again, and say it's the second time.
+
+# Lesson 3: If You Can't Measure a Rule, It's a Suggestion
+
+I don't like comments in code that explain what the code already says. Agents love writing them. I have asked agents to write fewer comments more times than I'd like to admit. Eight, by the count in my notes, and by the eighth I was not being polite about it.
+
+The rule was in the instructions file the whole time. It said to keep comments to a minimum and match the comment density of the surrounding code. Then an agent working in a module with very heavily commented code read that, reasoned that dense neighbours meant dense comments were fine, and produced two pull requests where 16% and 15% of the added lines were comments. It followed the rule. The rule just allowed it.
+
+A ninth "please write fewer comments" wasn't going to fix that. A number did. The rule now says added comment lines must be under about 10% of all added lines, that the limit is absolute no matter what the neighbouring code looks like, and it includes the two commands to measure it before opening a pull request.
+
+```sh
+git diff main --numstat -- '*.go' '*.ts' | awk '{a+=$1} END {print a}'
+git diff main -- '*.go' '*.ts' | grep -E "^\+" | grep -vE "^\+\+\+" | grep -cE "^\+\s*(//|/\*|\*)"
+```
+
+Those two pull requests came down to about 3% after a cleanup. Around 375 comment lines were deleted, and nothing they said was missed.
+
+Agents still overshoot from time to time. The difference is that the agent now measures it and fixes it before I ever see the pull request.
+
+# Lesson 4: An Agent's Report Is a Claim
+
+When an agent says "done", "tests pass" or "nothing uses this", that's a claim about the world, and claims can be wrong.
+
+I used to think only reports about **changes** were risky. "I applied the change" or "the tests pass" can be wrong in ways that hurt. Reports about **reading** something felt safe.
+
+Then an agent ran a read only audit, looking for code that depended on something we were retiring. It flagged one file, based on a match in a field name. Overnight, a different agent picked up that finding and opened a pull request deleting the code as cleanup. The field it had matched was an older, unrelated field that happened to share a few words. I caught it in review, but only because I happened to know that corner of the codebase.
+
+Nobody lied. The audit made a claim, the next agent treated it as a fact, and so it skipped the check it would normally have done, which was to read the code.
+
+So the question I ask now is: **if I believe this, will I skip a check I would otherwise have run?** If the answer is yes, check it. It doesn't matter whether the report is about a change or a read, or whether it came from an agent or from me.
+
+# Lesson 5: Sometimes It Works
+
+I don't want to make this sound like a list of disasters, so here's the moment that convinced me the whole thing was worth it.
+
+A few weeks in, I was reading through the output of a subagent working on an unrelated fix. Before stating a conclusion, it stopped to verify it, and cited one of the lessons by name as the reason. That lesson had been written by a different session, weeks earlier, about a different problem. This agent had never been part of that conversation. It had only ever seen the lesson in the notes.
+
+A mistake made once, written down once, and avoided by an agent that never saw the original mistake. That's the entire point.
+
+# What I'd Tell Someone Starting Out
+
+- **Start with a plain folder of text.** You can make it clever later. You probably won't need to.
+- **Write down why, as well as what.** "Don't replace this constant" is a rule. "This constant exists because the table has hundreds of millions of rows" is context, and context generalises.
+- **Treat your instructions file like production code.** Review changes to it. Delete lines that are no longer true. A stale line is worse than a missing one.
+- **Ask what a rule does when it's obeyed perfectly.** If the answer is "nothing", give it a floor.
+- **Give your rules a number and a way to check it.** A rule you can't measure is a suggestion.
+- **Verify reports that would let you skip a check.** Including your own, and including the ones that sound most confident.
+
+The work hasn't gone away. A lot of it has moved from writing code to writing down what the code can't tell you, and checking that what I wrote down is still true. That turns out to be most of the job of a senior engineer anyway. It's just a lot more obvious when your team doesn't remember yesterday.
+
+The only recommendation I will make is to take the time to learn and understand the tools you are working with. Agents are tools too, and the ones I work with read every word I write down. That's worth taking seriously.
+
+# References
+
+[AGENTS.md](https://agents.md/)
+
+[Classes in TypeScript](/classes-in-typescript)
+
+[Immutability in Go](/immutability-in-go)
