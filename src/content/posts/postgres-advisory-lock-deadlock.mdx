@@ -158,15 +158,23 @@ So tab 3 waits for tab 2. Tab 2 waits for tab 1. And tab 1 is waiting for... tab
 
 # Why Postgres Doesn't Notice
 
-**Postgres** has a deadlock detector. When a session has been waiting on a lock for longer than `deadlock_timeout` (1 second by default), it checks for a cycle, and if it finds one it cancels a session to break it.
+**Postgres** can find deadlocks by itself. If a session waits on a lock for more than one second (the `deadlock_timeout` setting), **Postgres** looks at who is waiting for whom. If the waits go round in a circle, it cancels one session so the others can carry on.
 
-I left the reproduction above running for 20 seconds. Nothing was cancelled.
+I left the reproduction running for 20 seconds. Nothing was cancelled.
 
-The reason is that the detector can only see waits **inside the database**. From where **Postgres** is sitting, tab 1 isn't waiting on anything. It's an idle session that happens to hold a lock. The link from tab 1 to tab 3 doesn't exist in the database at all. It exists in our **Go** program, which holds both connections and won't release the lock on one until the migration on the other finishes.
+**Postgres** can only see waits that happen inside the database. This is what it sees.
 
-The cycle passes through the application, so the database can't see it. Nothing errors. Nothing times out. It just sits there until CI gives up on the job.
+- Tab 3 waits for tab 2.
+- Tab 2 waits for tab 1.
+- Tab 1 doesn't wait for anything. It's idle, and it holds a lock.
 
-In our real suite this wasn't three sessions. It was one package migrating and 17 others all sitting inside `pg_advisory_lock`, each one holding a snapshot that the migration was waiting for.
+To **Postgres**, the chain has an end, so there's nothing to cancel.
+
+The missing step, tab 1 waiting for tab 3, happens in our **Go** program. The program only releases the lock on tab 1 after the migration on tab 3 finishes. **Postgres** has no way to know that.
+
+So nothing errors and nothing times out. The tests just stop until CI cancels the job.
+
+In our real suite there were more than three sessions. One package was migrating, and 17 others were waiting in `pg_advisory_lock`. Each of the 17 had a snapshot open, and the migration was waiting for all of them.
 
 # Fix 2: Poll Instead of Block
 
