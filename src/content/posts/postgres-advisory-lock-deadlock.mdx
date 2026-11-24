@@ -3,7 +3,7 @@ title: "A Deadlock Postgres Can't See"
 slug: "postgres-advisory-lock-deadlock"
 date: "2026-10-25"
 hero: "/images/postgres-advisory-lock-deadlock-hero.jpg"
-description: "_25th October 2026 · 9 minute read_"
+description: "_25th October 2026 · 10 minute read_"
 type: "post"
 ---
 
@@ -15,6 +15,8 @@ type: "post"
 I have a preference for running my **Go** tests inside a **Docker Compose** network with access to a full **PostgreSQL** instance, rather than mocking the database out. It means I'm testing at least some of the boundaries of my system, and it catches the kind of problems a mock never will: a missing index, a constraint I forgot about, a query that only works in my head.
 
 Not every test needs a database connection. The ones that do run the database migrations before they start, so the schema is always up to date. Day to day I use [golang-migrate](https://github.com/golang-migrate/migrate) for this.
+
+The migrations themselves are idempotent. If the database is already up to date, running them again does nothing. The trouble starts when two of them run **at the same time**.
 
 `go test` runs packages **in parallel** by default, one per CPU core. The more tests I added, the more migrations ran at the same time, and the flakier my test suite got. What I really needed was a singleton migration: the migrations run exactly once, no matter how many tests ask for them at the same moment.
 
@@ -36,7 +38,21 @@ That constraint lives in the **Postgres** system catalog. It fires when two tran
 
 It's easy to file this under "flaky" and hit retry. Retry even works, because by the second attempt the table exists. But a failure that reproduces three times out of three is a race, and this one happens more on a laptop with lots of cores than on a 2 CPU CI runner.
 
-The quick fix is `go test -p 1`, which runs one package at a time. I didn't want that. Parallel tests are a big part of why the suite is fast, and serialising everything to fix one step felt like using a sledgehammer.
+# Fix 0: Run One Package at a Time
+
+The quickest fix is to stop running packages in parallel.
+
+```bash
+$ go test -p 1 ./...
+```
+
+`-p 1` tells `go test` to run one package at a time. Only one package can migrate at once, so the race goes away. I used this for a while. It works, but it's a poor fix, for a few reasons.
+
+- **It makes the whole suite slower.** The flag applies to every package, including the ones that never touch the database. The suite now takes as long as every package added together, and it gets worse with every package you add.
+- **It only works where the flag is set.** It has to be in the Makefile, the CI script and every editor's test settings. Run a plain `go test ./...` and the race is back.
+- **It hides the problem.** The migration code is still unsafe to run twice at once. When several replicas of a service start together in production, they race the same way, and no test flag helps there.
+
+The race happens in one step, the migration. Serialising every package to protect that one step felt like using a sledgehammer. I wanted the tests to stay parallel and only the migration to run one at a time.
 
 # Fix 1: An Advisory Lock
 
@@ -203,11 +219,19 @@ With the lock fixed, the very next run on my laptop failed with a new error.
 pq: remaining connection slots are reserved for roles with the SUPERUSER attribute
 ```
 
-This one is just arithmetic. We had 27 test packages that use the database. Each one opened a pool with up to 25 connections. `go test` ran 18 packages at once on my machine. And the test database had the default `max_connections` of 100.
+This one is just arithmetic. We had 27 test packages that use the database. Each one opened a pool with up to 25 connections. `go test` ran 18 packages at once on my machine. And the test database had the default `max_connections` of 100. 18 packages with 25 connections each can ask for 450.
 
 The lock made it worse, because packages that used to fail fast were now alive and holding connections while they waited their turn.
 
-For a local and CI test database, raising the limit is fine.
+The obvious question is why the packages don't share one pool. They can't. `go test` builds each package into its own test binary and runs it as a separate process. A `*sql.DB` pool lives inside one process, so every package gets its own. The tests inside one package do share a pool, and that part is fine.
+
+The better fix is a smaller pool. A test package rarely needs 25 connections. With 5 per package, 18 packages need at most 90, which fits under the default.
+
+```go
+db.SetMaxOpenConns(5)
+```
+
+Raising `max_connections` on the test database also works, and it's one line.
 
 ```yaml
 services:
@@ -215,6 +239,8 @@ services:
     image: postgres:17
     command: ["postgres", "-c", "max_connections=500"]
 ```
+
+On its own, though, it's a bit of a smell. It covers up the arithmetic, and the number of packages `go test` runs at once grows with the CPU count, so a bigger machine hits the same wall later. I'd do both: a small pool in the tests, and some headroom on the test database.
 
 # Three Problems in a Row
 
@@ -270,11 +296,13 @@ Both are reasonable. If you're starting from scratch, the up-front step is simpl
 # Summary
 
 - `go test` runs packages in parallel, and shared database setup will race
+- `go test -p 1` removes the race by making the whole suite slower, and only where the flag is set
 - An advisory lock is a good way to serialise migrations without serialising tests
 - Running migrations once before the suite starts avoids the problem entirely
 - Never wait in a blocking `pg_advisory_lock` if anything might run `CREATE INDEX CONCURRENTLY`
 - Poll with `pg_try_advisory_lock`, and always honour a context
 - If a deadlock crosses your application, the database can't help you
+- Each test package is its own process with its own pool, so keep test pools small
 
 The only recommendation I will make is to take the time to understand the tools you're working with, and in particular **how** they do the clever thing they do. `CREATE INDEX CONCURRENTLY` avoids blocking writes by waiting for snapshots. Once you know that, this deadlock is obvious. Until you do, it looks like the test suite has simply stopped.
 
