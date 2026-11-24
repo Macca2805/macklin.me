@@ -580,3 +580,41 @@ body {
 code {
   color: var(--color-text-secondary);
 }
+/* Diagrams can break out of the text column when they need the room */
+.article-body pre.mermaid {
+  width: min(1000px, calc(100vw - 4rem));
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 2rem 0;
+  background: none;
+  display: flex;
+  justify-content: center;
+}
+
+.article-body pre.mermaid svg {
+  width: 100%;
+  height: auto;
+}
+
+@media (max-width: 640px) {
+  .article-body pre.mermaid {
+    width: calc(100vw - 2rem);
+  }
+}
+
+/* Code blocks grow past the text column only when a line needs the room */
+.article-body .expressive-code {
+  width: max-content;
+  min-width: 100%;
+  max-width: min(1000px, calc(100vw - 4rem));
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+@media (max-width: 640px) {
+  .article-body .expressive-code {
+    max-width: calc(100vw - 2rem);
+  }
+}

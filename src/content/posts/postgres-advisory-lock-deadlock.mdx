@@ -156,6 +156,47 @@ There's the whole story in three rows.
 
 So tab 3 waits for tab 2. Tab 2 waits for tab 1. And tab 1 is waiting for... tab 3 to finish, so the client can release the lock. That's a cycle.
 
+Here's the same thing as a sequence diagram. In our real suite, tab 1 and tab 3 are two connections owned by one test package, and tab 2 is any other package.
+
+```mermaid
+---
+config:
+  sequence:
+    mirrorActors: false
+---
+sequenceDiagram
+    box Go tests
+        participant A as Package A
+    end
+    box Postgres
+        participant T1 as Tab 1<br/>(A's lock)
+        participant T2 as Tab 2<br/>(B's lock)
+        participant T3 as Tab 3<br/>(A's migration)
+    end
+    box Go tests
+        participant B as Package B
+    end
+
+    activate A
+    A->>+T1: pg_advisory_lock(42)
+    T1-->>-A: locked
+    Note over T1: idle, holds the lock
+
+    activate B
+    B->>+T2: pg_advisory_lock(42)
+    Note over T2: waits for tab 1<br/>(snapshot open)
+
+    A->>+T3: CREATE INDEX CONCURRENTLY
+    Note over T3: waits for tab 2's snapshot
+
+    Note over A: waits for tab 3<br/>before it unlocks tab 1
+    Note over T1,T3: nothing moves from here on
+    deactivate T3
+    deactivate T2
+    deactivate B
+    deactivate A
+```
+
 # Why Postgres Doesn't Notice
 
 **Postgres** can find deadlocks by itself. If a session waits on a lock for more than one second (the `deadlock_timeout` setting), **Postgres** looks at who is waiting for whom. If the waits go round in a circle, it cancels one session so the others can carry on.
@@ -171,6 +212,21 @@ I left the reproduction running for 20 seconds. Nothing was cancelled.
 To **Postgres**, the chain has an end, so there's nothing to cancel.
 
 The missing step, tab 1 waiting for tab 3, happens in our **Go** program. The program only releases the lock on tab 1 after the migration on tab 3 finishes. **Postgres** has no way to know that.
+
+Draw every wait as an arrow and the loop shows up. Two arrows are inside the database. The other two go through the **Go** program, where **Postgres** can't follow it.
+
+```mermaid
+flowchart LR
+    subgraph PG["Postgres can see this"]
+        T3["Tab 3<br/>CREATE INDEX"] -->|waits for snapshot| T2["Tab 2<br/>wants the lock"]
+        T2 -->|waits for lock| T1["Tab 1<br/>idle, holds lock"]
+    end
+    subgraph GO["Postgres can't see this"]
+        A["Package A"]
+    end
+    T1 -.->|unlocked by| A
+    A -.->|after tab 3 finishes| T3
+```
 
 So nothing errors and nothing times out. The tests just stop until CI cancels the job.
 
@@ -204,6 +260,49 @@ func lockForMigrations(ctx context.Context, conn *sql.Conn) error {
 ```
 
 Between attempts the waiting session is idle, with no query running and no snapshot. `CREATE INDEX CONCURRENTLY` has nothing to wait for, so it finishes, the migration completes, the lock is released, and the next package to poll gets it.
+
+Here's the same sequence with polling. Compare tab 2's activity bars with the first diagram: it's only busy for the moment it takes to say no.
+
+```mermaid
+---
+config:
+  sequence:
+    mirrorActors: false
+---
+sequenceDiagram
+    box Go tests
+        participant A as Package A
+    end
+    box Postgres
+        participant T1 as Tab 1<br/>(A's lock)
+        participant T2 as Tab 2<br/>(B's lock)
+        participant T3 as Tab 3<br/>(A's migration)
+    end
+    box Go tests
+        participant B as Package B
+    end
+
+    activate A
+    A->>+T1: pg_try_advisory_lock(42)
+    T1-->>-A: true
+    A->>+T3: CREATE INDEX CONCURRENTLY
+
+    activate B
+    B->>+T2: pg_try_advisory_lock(42)
+    T2-->>-B: false
+    Note over T2: idle, no snapshot
+    Note over B: sleeps 100ms
+
+    T3-->>-A: index built
+    A->>+T1: pg_advisory_unlock(42)
+    T1-->>-A: true
+    deactivate A
+
+    B->>+T2: pg_try_advisory_lock(42)
+    T2-->>-B: true
+    Note over B: nothing left to migrate
+    deactivate B
+```
 
 You can prove it in the reproduction. Cancel the `SELECT` in tab 2 with `ctrl + c`, and the index in tab 3 finishes immediately. Then try the polling version in tab 2.
 
