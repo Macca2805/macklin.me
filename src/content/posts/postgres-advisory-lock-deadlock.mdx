@@ -1,0 +1,426 @@
+---
+title: "A Deadlock Postgres Can't See"
+slug: "postgres-advisory-lock-deadlock"
+date: "2026-10-25"
+hero: "/images/postgres-advisory-lock-deadlock-hero.jpg"
+description: "_25th October 2026 · 10 minute read_"
+type: "post"
+---
+
+
+> Running database migrations from inside a parallel **Go** test suite needs some way to make sure only one migration runs at a time. A **PostgreSQL** advisory lock is a neat way to do it, but the obvious version of it can deadlock against `CREATE INDEX CONCURRENTLY`, in a way **Postgres** can't detect. This post walks through how I got there, how to reproduce the deadlock in three terminal tabs, and the small change that fixed it.
+
+# Context
+
+I have a preference for running my **Go** tests inside a **Docker Compose** network with access to a full **PostgreSQL** instance, rather than mocking the database out. It means I'm testing at least some of the boundaries of my system, and it catches the kind of problems a mock never will: a missing index, a constraint I forgot about, a query that only works in my head.
+
+Not every test needs a database connection. The ones that do run the database migrations before they start, so the schema is always up to date. Day to day I use [golang-migrate](https://github.com/golang-migrate/migrate) for this.
+
+The migrations themselves are idempotent. If the database is already up to date, running them again does nothing. The trouble starts when two of them run **at the same time**.
+
+`go test` runs packages **in parallel** by default, one per CPU core. The more tests I added, the more migrations ran at the same time, and the flakier my test suite got. What I really needed was a singleton migration: the migrations run exactly once, no matter how many tests ask for them at the same moment.
+
+That turned out to be the start of a fairly long chain of problems, each one hiding the next.
+
+> ℹ️ You'll need **Docker** to follow along. Everything else runs inside the `postgres` image.
+
+# Problem 1: Two Packages Create the Same Table
+
+The first symptom was an occasional failure that looked like this.
+
+```
+pq: duplicate key value violates unique constraint "pg_type_typname_nsp_index"
+```
+
+That constraint lives in the **Postgres** system catalog. It fires when two transactions try to create the same table at the same moment. In my case, two test packages both started at once, both saw an empty database, and both tried to create the migrations tracking table.
+
+**golang-migrate** does have locking of its own, but in my testing two processes could still race each other on the very first migration.
+
+It's easy to file this under "flaky" and hit retry. Retry even works, because by the second attempt the table exists. But a failure that reproduces three times out of three is a race, and this one happens more on a laptop with lots of cores than on a 2 CPU CI runner.
+
+# Fix 0: Run One Package at a Time
+
+The quickest fix is to stop running packages in parallel.
+
+```bash
+$ go test -p 1 ./...
+```
+
+`-p 1` tells `go test` to run one package at a time. Only one package can migrate at once, so the race goes away. I used this for a while. It works, but it's a poor fix, for a few reasons.
+
+- **It makes the whole suite slower.** The flag applies to every package, including the ones that never touch the database. The suite now takes as long as every package added together, and it gets worse with every package you add.
+- **It only works where the flag is set.** It has to be in the Makefile, the CI script and every editor's test settings. Run a plain `go test ./...` and the race is back.
+- **It hides the problem.** The migration code is still unsafe to run twice at once. When several replicas of a service start together in production, they race the same way, and no test flag helps there.
+
+The race happens in one step, the migration. Serialising every package to protect that one step felt like using a sledgehammer. I wanted the tests to stay parallel and only the migration to run one at a time.
+
+# Fix 1: An Advisory Lock
+
+**Postgres** has [advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS). They don't lock any table or row. They're just a named number that one session at a time can hold, and your application decides what it means.
+
+So the plan was: before calling **golang-migrate**, take advisory lock `42`. Run the migrations. Release the lock. Any other package that starts at the same time waits for the lock, then finds there is nothing left to migrate, and gets on with its tests.
+
+```go
+const migrationLock = 42
+
+func lockForMigrations(ctx context.Context, conn *sql.Conn) error {
+    _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationLock)
+    return err
+}
+```
+
+`pg_advisory_lock` **blocks** until the lock is free. That sounds like exactly what we want.
+
+The lock is taken on its own dedicated connection, and the migrations run on a different one. Hold on to that detail, because it matters later.
+
+This worked well. The race went away, the tests stayed parallel, and the same lock also protected us when several replicas of a service started up together in production and all tried to migrate.
+
+It worked well for a couple of weeks.
+
+# Problem 2: The Suite Hangs
+
+Then someone added a migration that created an index **concurrently**.
+
+```sql
+CREATE INDEX CONCURRENTLY orders_customer_id ON orders (customer_id);
+```
+
+`CREATE INDEX CONCURRENTLY` builds an index without taking a lock that blocks writes. That makes it the right way to add an index to a busy production table. The way it achieves this is important: part way through the build, it **waits for every other transaction that has an open snapshot to finish**. A snapshot is the view of the database a query is working from. If an older snapshot is still in use, the new index can't be marked as valid yet.
+
+The test suite didn't fail. It hung. Indefinitely.
+
+# Reproducing It
+
+Let's build it from scratch. Start a database.
+
+```bash
+$ docker run -d --name pg -e POSTGRES_PASSWORD=pw postgres:17
+$ docker exec -it pg psql -U postgres -c \
+    "CREATE TABLE orders (id int, customer_id int);"
+```
+
+Now open three terminal tabs. Each one is a separate session.
+
+**Tab 1** plays the test package that won the race. It takes the lock and holds it.
+
+```bash
+$ docker exec -it pg psql -U postgres
+postgres=# SELECT pg_advisory_lock(42);
+ pg_advisory_lock
+------------------
+
+(1 row)
+```
+
+**Tab 2** plays any other test package. It wants the lock too, so it waits.
+
+```bash
+$ docker exec -it pg psql -U postgres
+postgres=# SELECT pg_advisory_lock(42);
+```
+
+This one doesn't return. That's expected.
+
+**Tab 3** plays the winning package's migration connection, running the new migration.
+
+```bash
+$ docker exec -it pg psql -U postgres
+postgres=# CREATE INDEX CONCURRENTLY orders_customer_id ON orders (customer_id);
+```
+
+This one doesn't return either. And it never will.
+
+# What's Going On
+
+Let's ask **Postgres** what everyone is doing, from a fourth tab.
+
+```sql
+SELECT pid, state, wait_event_type, wait_event, query
+FROM pg_stat_activity
+WHERE backend_type = 'client backend' AND pid <> pg_backend_pid();
+```
+
+```
+ pid | state  | wait_event_type | wait_event |                  query
+-----+--------+-----------------+------------+-----------------------------------------
+  86 | idle   | Client          | ClientRead | SELECT pg_advisory_lock(42);
+  93 | active | Lock            | advisory   | SELECT pg_advisory_lock(42);
+ 100 | active | Lock            | virtualxid | CREATE INDEX CONCURRENTLY orders_cust...
+```
+
+There's the whole story in three rows.
+
+- **Tab 1 (pid 86)** holds the lock and is `idle`. It's waiting for the client to send it something.
+- **Tab 2 (pid 93)** is waiting on the advisory lock. Because it's in the middle of running a `SELECT`, it has an **open snapshot**.
+- **Tab 3 (pid 100)** is waiting on `virtualxid`. That's `CREATE INDEX CONCURRENTLY` waiting for tab 2's snapshot to go away.
+
+So tab 3 waits for tab 2. Tab 2 waits for tab 1. And tab 1 is waiting for... tab 3 to finish, so the client can release the lock. That's a cycle.
+
+Here's the same thing as a sequence diagram. In our real suite, tab 1 and tab 3 are two connections owned by one test package, and tab 2 is any other package.
+
+```mermaid
+---
+config:
+  sequence:
+    mirrorActors: false
+---
+sequenceDiagram
+    box Go tests
+        participant A as Package A
+    end
+    box Postgres
+        participant T1 as Tab 1<br/>(A's lock)
+        participant T2 as Tab 2<br/>(B's lock)
+        participant T3 as Tab 3<br/>(A's migration)
+    end
+    box Go tests
+        participant B as Package B
+    end
+
+    activate A
+    A->>+T1: pg_advisory_lock(42)
+    T1-->>-A: locked
+    Note over T1: idle, holds the lock
+
+    activate B
+    B->>+T2: pg_advisory_lock(42)
+    Note over T2: waits for tab 1<br/>(snapshot open)
+
+    A->>+T3: CREATE INDEX CONCURRENTLY
+    Note over T3: waits for tab 2's snapshot
+
+    Note over A: waits for tab 3<br/>before it unlocks tab 1
+    Note over T1,T3: nothing moves from here on
+    deactivate T3
+    deactivate T2
+    deactivate B
+    deactivate A
+```
+
+# Why Postgres Doesn't Notice
+
+**Postgres** can find deadlocks by itself. If a session waits on a lock for more than one second (the `deadlock_timeout` setting), **Postgres** looks at who is waiting for whom. If the waits go round in a circle, it cancels one session so the others can carry on.
+
+I left the reproduction running for 20 seconds. Nothing was cancelled.
+
+**Postgres** can only see waits that happen inside the database. This is what it sees.
+
+- Tab 3 waits for tab 2.
+- Tab 2 waits for tab 1.
+- Tab 1 doesn't wait for anything. It's idle, and it holds a lock.
+
+To **Postgres**, the chain has an end, so there's nothing to cancel.
+
+The missing step, tab 1 waiting for tab 3, happens in our **Go** program. The program only releases the lock on tab 1 after the migration on tab 3 finishes. **Postgres** has no way to know that.
+
+Draw every wait as an arrow and the loop shows up. Two arrows are inside the database. The other two go through the **Go** program, where **Postgres** can't follow it.
+
+```mermaid
+flowchart LR
+    subgraph PG["Postgres can see this"]
+        T3["Tab 3<br/>CREATE INDEX"] -->|waits for snapshot| T2["Tab 2<br/>wants the lock"]
+        T2 -->|waits for lock| T1["Tab 1<br/>idle, holds lock"]
+    end
+    subgraph GO["Postgres can't see this"]
+        A["Package A"]
+    end
+    T1 -.->|unlocked by| A
+    A -.->|after tab 3 finishes| T3
+```
+
+So nothing errors and nothing times out. The tests just stop until CI cancels the job.
+
+In our real suite there were more than three sessions. One package was migrating, and 17 others were waiting in `pg_advisory_lock`. Each of the 17 had a snapshot open, and the migration was waiting for all of them.
+
+# Fix 2: Poll Instead of Block
+
+The lock itself is fine. The trouble is that waiters hold an open snapshot **while** they wait. If they asked for the lock, got told no, and went away for a moment, there would be no snapshot to wait for.
+
+That's what `pg_try_advisory_lock` does. It returns `true` or `false` straight away, and never blocks.
+
+```go
+func lockForMigrations(ctx context.Context, conn *sql.Conn) error {
+    for {
+        var locked bool
+        err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", migrationLock).Scan(&locked)
+        if err != nil {
+            return err
+        }
+        if locked {
+            return nil
+        }
+
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        case <-time.After(100 * time.Millisecond):
+        }
+    }
+}
+```
+
+Between attempts the waiting session is idle, with no query running and no snapshot. `CREATE INDEX CONCURRENTLY` has nothing to wait for, so it finishes, the migration completes, the lock is released, and the next package to poll gets it.
+
+Here's the same sequence with polling. Compare tab 2's activity bars with the first diagram: it's only busy for the moment it takes to say no.
+
+```mermaid
+---
+config:
+  sequence:
+    mirrorActors: false
+---
+sequenceDiagram
+    box Go tests
+        participant A as Package A
+    end
+    box Postgres
+        participant T1 as Tab 1<br/>(A's lock)
+        participant T2 as Tab 2<br/>(B's lock)
+        participant T3 as Tab 3<br/>(A's migration)
+    end
+    box Go tests
+        participant B as Package B
+    end
+
+    activate A
+    A->>+T1: pg_try_advisory_lock(42)
+    T1-->>-A: true
+    A->>+T3: CREATE INDEX CONCURRENTLY
+
+    activate B
+    B->>+T2: pg_try_advisory_lock(42)
+    T2-->>-B: false
+    Note over T2: idle, no snapshot
+    Note over B: sleeps 100ms
+
+    T3-->>-A: index built
+    A->>+T1: pg_advisory_unlock(42)
+    T1-->>-A: true
+    deactivate A
+
+    B->>+T2: pg_try_advisory_lock(42)
+    T2-->>-B: true
+    Note over B: nothing left to migrate
+    deactivate B
+```
+
+You can prove it in the reproduction. Cancel the `SELECT` in tab 2 with `ctrl + c`, and the index in tab 3 finishes immediately. Then try the polling version in tab 2.
+
+```sql
+postgres=# SELECT pg_try_advisory_lock(42);
+ pg_try_advisory_lock
+----------------------
+ f
+(1 row)
+```
+
+It answers straight away instead of hanging, and leaves nothing behind for anyone else to wait on.
+
+> ❗ **Warning:** Notice the `ctx.Done()` case. A wait with no way out is exactly how this showed up as "CI is stuck" instead of a failure with a useful message. Always give a lock loop a way to give up.
+
+# Problem 3: Out of Connections
+
+With the lock fixed, the very next run on my laptop failed with a new error.
+
+```
+pq: remaining connection slots are reserved for roles with the SUPERUSER attribute
+```
+
+This one is just arithmetic. We had 27 test packages that use the database. Each one opened a pool with up to 25 connections. `go test` ran 18 packages at once on my machine. And the test database had the default `max_connections` of 100. 18 packages with 25 connections each can ask for 450.
+
+The lock made it worse, because packages that used to fail fast were now alive and holding connections while they waited their turn.
+
+The obvious question is why the packages don't share one pool. They can't. `go test` builds each package into its own test binary and runs it as a separate process. A `*sql.DB` pool lives inside one process, so every package gets its own. The tests inside one package do share a pool, and that part is fine.
+
+The better fix is a smaller pool. A test package rarely needs 25 connections. With 5 per package, 18 packages need at most 90, which fits under the default.
+
+```go
+db.SetMaxOpenConns(5)
+```
+
+Raising `max_connections` on the test database also works, and it's one line.
+
+```yaml
+services:
+  postgres:
+    image: postgres:17
+    command: ["postgres", "-c", "max_connections=500"]
+```
+
+On its own, though, it's a bit of a smell. It covers up the arithmetic, and the number of packages `go test` runs at once grows with the CPU count, so a bigger machine hits the same wall later. I'd do both: a small pool in the tests, and some headroom on the test database.
+
+# Three Problems in a Row
+
+Looking back, we had three separate problems, and each one was hidden behind the one before it.
+
+1. A race on creating a catalog table
+2. A deadlock that **Postgres** can't detect
+3. Running out of connections
+
+I've come to expect this shape whenever I serialise something that used to race. Adding a lock moves contention somewhere else, and the new place is usually less obvious than the old one.
+
+There's one more thing worth calling out. The blocking version of this lock lived in a project template that several services were created from. None of them had hit it, simply because none of them had a `CONCURRENTLY` migration yet. Every one of them was a hang waiting for the first person to add one. A bug in a template is sneaky that way, because nothing ever reports it until the day it goes off.
+
+# An Alternative: Migrate Before the Tests Start
+
+There is a completely different way to solve the original problem, and it's worth mentioning because it avoids everything in this post.
+
+Instead of each test running migrations, run them **once**, before the test suite starts, using a separate step. That could be the **golang-migrate** CLI, or a tool like [Flyway](https://github.com/flyway/flyway), running as a one-off service in the same **Docker Compose** file.
+
+```yaml
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: pw
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 1s
+
+  migrate:
+    image: migrate/migrate
+    command: ["-path", "/migrations", "-database", "postgres://postgres:pw@postgres:5432/postgres?sslmode=disable", "up"]
+    volumes:
+      - ./migrations:/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tests:
+    build: .
+    command: ["go", "test", "./..."]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+```
+
+No test ever migrates, so nothing races, and there is no lock to deadlock on.
+
+The trade-off is that the tests are no longer self-contained. Running a single test straight from your editor only works if the migration step has already run against that database. The lock approach also has a bonus the up-front step doesn't: the same code protects you in production, when several replicas of a service start at once and all try to migrate.
+
+Both are reasonable. If you're starting from scratch, the up-front step is simpler, and simple is usually the right call.
+
+# Summary
+
+- `go test` runs packages in parallel, and shared database setup will race
+- `go test -p 1` removes the race by making the whole suite slower, and only where the flag is set
+- An advisory lock is a good way to serialise migrations without serialising tests
+- Running migrations once before the suite starts avoids the problem entirely
+- Never wait in a blocking `pg_advisory_lock` if anything might run `CREATE INDEX CONCURRENTLY`
+- Poll with `pg_try_advisory_lock`, and always honour a context
+- If a deadlock crosses your application, the database can't help you
+- Each test package is its own process with its own pool, so keep test pools small
+
+The only recommendation I will make is to take the time to understand the tools you're working with, and in particular **how** they do the clever thing they do. `CREATE INDEX CONCURRENTLY` avoids blocking writes by waiting for snapshots. Once you know that, this deadlock is obvious. Until you do, it looks like the test suite has simply stopped.
+
+# References
+
+[Advisory Locks | PostgreSQL Documentation](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS)
+
+[Advisory Lock Functions | PostgreSQL Documentation](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS)
+
+[Building Indexes Concurrently | PostgreSQL Documentation](https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY)
+
+[deadlock_timeout | PostgreSQL Documentation](https://www.postgresql.org/docs/current/runtime-config-locks.html#GUC-DEADLOCK-TIMEOUT)
+
+[go test flags: -p | Go Documentation](https://pkg.go.dev/cmd/go#hdr-Testing_flags)
