@@ -3,7 +3,7 @@ title: "Why Kubernetes Rollouts Return 502s Behind an AWS Load Balancer"
 slug: "kubernetes-rollouts-502s-aws-load-balancer"
 date: "2026-10-11"
 hero: "/images/kubernetes-rollouts-502s-aws-load-balancer-hero.jpg"
-description: "_11th October 2026 · 10 minute read_"
+description: "_11th October 2026 · 12 minute read_"
 type: "post"
 ---
 
@@ -36,6 +36,36 @@ Let's put some real numbers on it. On the service I was looking at:
 - The last old pod was killed **17 seconds** before the new targets left `initial`.
 
 So for a window of a few seconds, the ALB had old targets that were shutting down and new targets it wasn't willing to use yet.
+
+Here's that as a timeline, for the last old pod in a rollout. The numbers are rounded, but the shape is what matters.
+
+```mermaid
+---
+config:
+  gantt:
+    useWidth: 1000
+---
+gantt
+    dateFormat mm:ss
+    axisFormat %M:%S
+    tickInterval 5second
+    section New pod
+    Starting                : t1, 00:00, 00:11
+    Ready for Kubernetes    : milestone, t2, 00:11, 00:11
+    section New target
+    initial, no traffic     : t3, 00:00, 00:30
+    Healthy                 : milestone, t4, 00:30, 00:30
+    section Old pod
+    Serving                 : done, t5, 00:00, 00:13
+    Listener closed         : crit, t6, 00:13, 00:30
+    section Old target
+    Gets traffic            : active, t7, 00:00, 00:18
+    Deregistered            : t8, 00:18, 00:30
+    section Clients
+    502s                    : crit, t9, 00:13, 00:30
+```
+
+Kubernetes is happy at 11 seconds. The ALB isn't happy until 30. Everything in red happens in between.
 
 # Go Makes it Worse
 
@@ -175,21 +205,120 @@ I ran a probe against the service in a tight loop through a production rollout b
 
 A later re-test in another environment gave 747 calls with zero failures, so that one leftover failure was intermittent rather than part of every rollout.
 
-# Three Things That Look Like the Fix (But Aren't)
+Here's the same pod replacement with all four changes in place.
 
-While working through this I tried, or was tempted by, a few things that didn't help.
+```mermaid
+---
+config:
+  gantt:
+    useWidth: 1000
+---
+gantt
+    dateFormat mm:ss
+    axisFormat %M:%S
+    tickInterval 5second
+    section New pod
+    Starting                : t10, 00:00, 00:11
+    Waiting for ALB target  : t11, 00:11, 00:30
+    Ready for Kubernetes    : milestone, t12, 00:30, 00:30
+    section New target
+    initial, no traffic     : t13, 00:00, 00:30
+    Gets traffic            : active, t14, 00:30, 01:00
+    section Old pod
+    Serving                 : done, t15, 00:00, 00:30
+    preStop sleep, serving  : done, t16, 00:30, 00:55
+    Shutdown                : t17, 00:55, 01:00
+    section Old target
+    Gets traffic            : active, t18, 00:00, 00:35
+    Draining                : t19, 00:35, 01:00
+    section Clients
+    All requests served     : done, t20, 00:00, 01:00
+```
+
+The readiness gate moves "Ready" to the moment the ALB is ready, so the old pod isn't touched until there is somewhere else for traffic to go. The `preStop` sleep keeps the old pod serving until the ALB has stopped sending it anything. Nothing is red.
+
+# Things That Look Like the Fix (But Aren't)
+
+While working through this I tried, or was tempted by, a few things that didn't help. Some of them are worth knowing about even if you never hit this exact problem.
 
 ## Lowering the Deregistration Delay
 
-The target group's deregistration delay sounds like exactly the right knob. For `ip` targets it is part of the picture. For `instance` targets it does nothing during a rollout, because the target is a node and nodes aren't being deregistered.
+The target group's deregistration delay sounds like exactly the right knob. It's how long the ALB holds on to a target that's being removed, so in-flight requests can finish. The default is 300 seconds.
+
+It doesn't touch the gap that causes the 502s. Look at the first timeline again: the 502s start **before** the old target is deregistered, while the ALB still thinks the old pod is a normal target. The delay only applies **after** that. Lowering it makes rollouts finish sooner, and if you set it lower than your slowest request, it cuts those requests off part way through.
+
+For `instance` targets it does nothing at all during a rollout, because the target is a node and nodes aren't being deregistered.
 
 ## Changing `maxUnavailable` From 25%
 
-The default `maxUnavailable` is 25%, and it rounds **down**. With 2 or 3 replicas, 25% is already 0. For most of our services, changing the strategy was a no-op and the `preStop` hook was doing all the work.
+The default `maxUnavailable` is 25%, and Kubernetes rounds it **down**. (`maxSurge` also defaults to 25%, and rounds **up**.)
+
+| Replicas | 25% of replicas | `maxUnavailable` |
+|---|---|---|
+| 2 | 0.5 | 0 |
+| 3 | 0.75 | 0 |
+| 4 | 1 | 1 |
+| 5 | 1.25 | 1 |
+| 9 | 2.25 | 2 |
+
+With 2 or 3 replicas it's already 0, so setting it to 0 changes nothing. Most of our services ran 2 or 3 replicas, so for them the strategy change was a no-op and the `preStop` hook was doing all the work. It only made a difference on the couple of services with 5 or more.
 
 ## Trusting `helm upgrade --wait`
 
-`--wait` waits for pods to be Ready. That's the first clock. It knows nothing about the ALB, so it reports success while users are getting 502s. This is why the whole problem was invisible from our deploy pipeline.
+`--wait` waits for pods to be Ready. That's the first clock. It knows nothing about the ALB, so it reports success while users are getting 502s.
+
+```mermaid
+---
+config:
+  gantt:
+    useWidth: 1000
+---
+gantt
+    dateFormat mm:ss
+    axisFormat %M:%S
+    tickInterval 5second
+    section Kubernetes
+    New pod starting        : t21, 00:00, 00:11
+    New pod Ready           : milestone, t22, 00:11, 00:11
+    helm --wait returns     : milestone, t23, 00:13, 00:13
+    section Clients
+    502s                    : crit, t24, 00:13, 00:30
+```
+
+The deploy goes green at about 13 seconds, and the errors carry on for another 17. This is why the whole problem was invisible from our deploy pipeline.
+
+The readiness gate fixes this too. Once Ready means "the ALB target is healthy", `--wait` is waiting on the right thing.
+
+## Adding a `preStop` Sleep to a `Recreate` Deployment
+
+A Deployment with `strategy: Recreate` stops every old pod before it starts any new one. Some generic Helm charts use it as their default, so it's worth checking which strategy you actually have. One of our two replica services had a full outage on every deploy for exactly this reason, and nobody had chosen it.
+
+Adding a `preStop` sleep to a `Recreate` Deployment makes the outage **longer**. The old pods are already on their way out of the load balancer, so the sleep serves almost nobody, and the new pods can't start until it's over.
+
+```mermaid
+---
+config:
+  gantt:
+    useWidth: 1000
+---
+gantt
+    dateFormat mm:ss
+    axisFormat %M:%S
+    tickInterval 5second
+    section Without preStop
+    Old pod stops           : t25, 00:00, 00:02
+    New pod starting        : t26, 00:02, 00:13
+    New target initial      : t27, 00:13, 00:32
+    Errors                  : crit, t28, 00:00, 00:32
+    section With preStop
+    Old pod sleeps          : done, t29, 00:00, 00:25
+    Old pod stops           : t30, 00:25, 00:27
+    New pod starting        : t31, 00:27, 00:38
+    New target initial      : t32, 00:38, 00:57
+    Errors                  : crit, t33, 00:05, 00:57
+```
+
+If a service really can't run two copies at once, for example because it mounts a volume that only one pod can attach, leave it on `Recreate` and skip the `preStop` hook. Otherwise switch it to `RollingUpdate`.
 
 # A Bonus Footgun: `sh -c` as PID 1
 
@@ -221,6 +350,8 @@ When I counted rollouts from the **EKS audit log** instead (`verb=create` on `re
 
 The query returned a number. The number was wrong because of retention, and it pointed at a cause that didn't exist. Always ask what your data source has already thrown away.
 
+There's one more trap when you measure the fix. The first deploy of a `preStop` change still shows errors, because the pods being replaced were created from the old spec, which has no sleep. Measure on the **second** rollout.
+
 # Summary
 
 If you run services on EKS behind an ALB with `ip` targets, there is a good chance you have this problem and your pipeline will never tell you. The checklist:
@@ -230,6 +361,7 @@ If you run services on EKS behind an ALB with `ip` targets, there is a good chan
 - Set `terminationGracePeriodSeconds` higher than the sleep plus your shutdown timeout
 - Enable pod readiness gates on `ip` target namespaces
 - Use `maxSurge: 1` and `maxUnavailable: 0`
+- Check the Deployment strategy is `RollingUpdate`, and not `Recreate` by accident
 - Make sure your process is actually PID 1 and actually receives `SIGTERM`
 
 The only recommendation I will make is the one I keep coming back to. Take the time to understand the tools you are working with, including the parts that sit between your tools. Kubernetes and the ALB were each doing exactly what they were designed to do. The outage lived in the gap between them.
