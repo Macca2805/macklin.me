@@ -3,7 +3,7 @@ title: "Why Kubernetes Rollouts Return 502s Behind an AWS Load Balancer"
 slug: "kubernetes-rollouts-502s-aws-load-balancer"
 date: "2026-10-11"
 hero: "/images/kubernetes-rollouts-502s-aws-load-balancer-hero.jpg"
-description: "_11th October 2026 · 12 minute read_"
+description: "_11th October 2026 · 13 minute read_"
 type: "post"
 ---
 
@@ -35,7 +35,7 @@ Let's put some real numbers on it. On the service I was looking at:
 - The target group needed **2 health checks, 15 seconds apart** before a target was healthy.
 - The last old pod was killed **17 seconds** before the new targets left `initial`.
 
-So for a window of a few seconds, the ALB had old targets that were shutting down and new targets it wasn't willing to use yet.
+So for 17 seconds, the ALB had old targets that were shutting down and new targets it wasn't willing to use yet.
 
 Here's that as a timeline, for the last old pod in a rollout. The numbers are rounded, but the shape is what matters.
 
@@ -62,12 +62,12 @@ gantt
     Gets traffic            : active, t7, 00:00, 00:18
     Deregistered            : t8, 00:18, 00:30
     section Clients
-    502s                    : crit, t9, 00:13, 00:30
+    Errors                  : crit, t9, 00:13, 00:30
 ```
 
 Kubernetes is happy at 11 seconds. The ALB isn't happy until 30. Everything in red happens in between.
 
-# Go Makes it Worse
+# A Graceful Shutdown Isn't Enough
 
 This is where things get interesting. A typical **Go** HTTP server shuts down something like this.
 
@@ -75,15 +75,21 @@ This is where things get interesting. A typical **Go** HTTP server shuts down so
 func main() {
     srv := &http.Server{Addr: ":8080", Handler: routes()}
 
-    go srv.ListenAndServe()
+    go func() {
+        if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+            log.Fatal(err)
+        }
+    }()
 
-    stop := make(chan os.Signal, 1)
-    signal.Notify(stop, syscall.SIGTERM)
-    <-stop
+    ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+    defer stop()
+    <-ctx.Done()
 
-    ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+    shutdownCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
     defer cancel()
-    srv.Shutdown(ctx)
+    if err := srv.Shutdown(shutdownCtx); err != nil {
+        log.Printf("shutdown: %v", err)
+    }
 }
 ```
 
@@ -93,11 +99,13 @@ But read the documentation for [`http.Server.Shutdown`](https://pkg.go.dev/net/h
 
 > Shutdown works by first closing all open listeners, then closing all idle connections, and then waiting indefinitely for connections to return to idle and then shut down.
 
-The listener is closed the moment `SIGTERM` arrives. Any **new** connection after that point is refused.
+The listener is closed the moment `SIGTERM` arrives. Any **new** connection after that point is refused. Idle keep-alive connections are closed straight away too, and the ALB keeps a pool of those to every target and reuses them.
 
 Meanwhile, Kubernetes sends `SIGTERM` and removes the pod from the Service endpoints at roughly the same time. The AWS Load Balancer Controller notices the endpoint change and deregisters the target, but that takes a few seconds to reach the ALB. During those seconds the ALB still thinks the old pod is a perfectly good target, opens a connection, gets refused, and returns a **502** to the client.
 
 Two clocks that disagree, plus a server that slams the door immediately. Put them together and you get about 15 seconds of continuous 502s on every deploy.
+
+None of this is specific to **Go**. `Shutdown` does exactly what its documentation says. Any server that stops accepting connections as soon as it gets `SIGTERM` has the same problem, and most of them do.
 
 # The Variable That Decides Everything: Target Type
 
@@ -118,7 +126,9 @@ This means target health check lag **is** the outage window. Full exposure.
 
 Nodes are registered with the target group, and traffic flows ALB → NodePort → kube-proxy → pod. A pod rollout never deregisters a target, because the target is the node.
 
-You can still see a handful of 502s from keep-alive connections that land on a pod which is on its way out, but you won't get 15 seconds of them.
+I'd expect a handful of 502s from keep-alive connections that land on a pod which is on its way out, but not 15 seconds of them. I haven't measured that, so treat it as a reasoned guess.
+
+This isn't a reason to switch to `instance` targets. AWS recommends `ip` targets for EKS, and with the fixes below they behave well.
 
 In our case only one service in each cluster used `ip` targets, and of course it was the public one.
 
@@ -145,6 +155,8 @@ spec:
 > ℹ️ The built-in `sleep` action is available from Kubernetes 1.30. On older clusters you need `exec: { command: ["sleep", "25"] }`, which means you need a `sleep` binary in your image. Distroless images don't have one.
 
 For `ip` targets I found 15 seconds was not quite enough. 25 seconds was.
+
+A fixed sleep can look like a hack. It's the standard answer, and it's the reason the `sleep` action was added to Kubernetes. Nothing tells a pod "every load balancer has stopped sending you traffic", so the pod waits long enough for that to be true. Measure how long deregistration takes in your own cluster and pick a number a bit above it.
 
 ## 2. Give the Pod Enough Time to Finish
 
@@ -182,6 +194,12 @@ my-app-7d9f8c-fghij      1/1     Running   ...   1/1
 The first pod's container is up, but the ALB hasn't marked its target healthy yet, so Kubernetes leaves the old pods alone.
 
 > ❗ **Warning:** Readiness gates only make sense for `ip` targets. With `instance` targets there is no per-pod target to wait for.
+
+A few more things to know before you rely on it. All of them are in the controller's documentation.
+
+- The gate is added when a pod is **created**, and only if a Service that matches the pod and a `TargetGroupBinding` for that Service already exist. Create the Service and Ingress, and label the namespace, before the pods.
+- The webhook that adds the gate fails open by default in controller versions after v2.11.0. If the webhook is unavailable, pods are created without the gate and nothing warns you. The docs recommend `failurePolicy: Fail` with an `objectSelector`, so only the pods you've opted in are affected.
+- On **EKS Auto Mode** the built-in load balancer controller uses a different label: `eks.amazonaws.com/pod-readiness-gate-inject=enabled`.
 
 ## 4. Never Go Below Full Capacity
 
@@ -282,7 +300,7 @@ gantt
     New pod Ready           : milestone, t22, 00:11, 00:11
     helm --wait returns     : milestone, t23, 00:13, 00:13
     section Clients
-    502s                    : crit, t24, 00:13, 00:30
+    Errors                  : crit, t24, 00:13, 00:30
 ```
 
 The deploy goes green at about 13 seconds, and the errors carry on for another 17. This is why the whole problem was invisible from our deploy pipeline.
@@ -293,7 +311,7 @@ The readiness gate fixes this too. Once Ready means "the ALB target is healthy",
 
 A Deployment with `strategy: Recreate` stops every old pod before it starts any new one. Some generic Helm charts use it as their default, so it's worth checking which strategy you actually have. One of our two replica services had a full outage on every deploy for exactly this reason, and nobody had chosen it.
 
-Adding a `preStop` sleep to a `Recreate` Deployment makes the outage **longer**. The old pods are already on their way out of the load balancer, so the sleep serves almost nobody, and the new pods can't start until it's over.
+Adding a `preStop` sleep to a `Recreate` Deployment makes the outage **longer**. The old pods are already on their way out of the load balancer, so the sleep serves almost nobody, and the new pods can't start until it's over. The timings below are illustrative.
 
 ```mermaid
 ---
@@ -320,7 +338,7 @@ gantt
 
 If a service really can't run two copies at once, for example because it mounts a volume that only one pod can attach, leave it on `Recreate` and skip the `preStop` hook. Otherwise switch it to `RollingUpdate`.
 
-# A Bonus Footgun: `sh -c` as PID 1
+# A Bonus Footgun: A Shell as PID 1
 
 One of our services had this in its Dockerfile.
 
@@ -328,15 +346,23 @@ One of our services had this in its Dockerfile.
 ENTRYPOINT sh -c "gunicorn app:server --bind 0.0.0.0:8080"
 ```
 
-The shell form makes `sh` PID 1. On Debian based images `sh` is `dash`, and PID 1 ignores signals it hasn't installed a handler for. So `SIGTERM` never reached `gunicorn`, and every pod sat there until the `SIGKILL` 30 seconds later. No grace period in the world helps with that.
+This is the **shell form** of `ENTRYPOINT`, and Docker runs it inside `/bin/sh -c`. So PID 1 is a shell, with `gunicorn` two levels below it. PID 1 ignores any signal it hasn't set up a handler for, and the shell hasn't set one up for `SIGTERM`. So `SIGTERM` never reached `gunicorn`, and every pod sat there until the `SIGKILL` 30 seconds later. No grace period in the world helps with that.
 
-The fix is one word.
+Adding `exec` looks like the fix.
 
 ```dockerfile
 ENTRYPOINT sh -c "exec gunicorn app:server --bind 0.0.0.0:8080"
 ```
 
-`exec` replaces the shell with `gunicorn`, so `gunicorn` becomes PID 1 and gets the signal directly.
+It isn't. The shell form still wraps the whole line in another `/bin/sh -c`, so `exec` only replaces the inner shell, and PID 1 is still a shell. I tested both versions with `docker stop`, and both waited for the full timeout before being killed.
+
+The fix is the **exec form**, which runs the program directly with no shell at all.
+
+```dockerfile
+ENTRYPOINT ["gunicorn", "app:server", "--bind", "0.0.0.0:8080"]
+```
+
+Now `gunicorn` is PID 1 and gets the signal directly. Docker's own build checks warn about the shell form for exactly this reason (`JSONArgsRecommended`). If you really need a shell, for example to expand an environment variable, use `["sh", "-c", "exec gunicorn ..."]`. Then `exec` replaces the only shell there is.
 
 # A Note on Measuring This
 
@@ -352,6 +378,20 @@ The query returned a number. The number was wrong because of retention, and it p
 
 There's one more trap when you measure the fix. The first deploy of a `preStop` change still shows errors, because the pods being replaced were created from the old spec, which has no sleep. Measure on the **second** rollout.
 
+# Not Every 502 Is a Rollout
+
+Once I counted rollouts properly, more than 90% of the 502s fell inside one. The rest were a different problem, server timeouts, and one of them is worth knowing about because it looks a lot like this one.
+
+The ALB keeps idle connections to each target open for up to 60 seconds by default. If your server closes idle connections sooner, the ALB can send a request down a connection the server has just closed, and the client gets a 502. AWS recommends setting the server's keep-alive timeout higher than the ALB's idle timeout. In **Go** that's `IdleTimeout`, which falls back to `ReadTimeout` when it isn't set.
+
+```go
+srv := &http.Server{
+    Addr:        ":8080",
+    Handler:     routes(),
+    IdleTimeout: 75 * time.Second,
+}
+```
+
 # Summary
 
 If you run services on EKS behind an ALB with `ip` targets, there is a good chance you have this problem and your pipeline will never tell you. The checklist:
@@ -362,11 +402,14 @@ If you run services on EKS behind an ALB with `ip` targets, there is a good chan
 - Enable pod readiness gates on `ip` target namespaces
 - Use `maxSurge: 1` and `maxUnavailable: 0`
 - Check the Deployment strategy is `RollingUpdate`, and not `Recreate` by accident
-- Make sure your process is actually PID 1 and actually receives `SIGTERM`
+- Use the exec form of `ENTRYPOINT`, so your process is PID 1 and actually receives `SIGTERM`
+- Keep your server's keep-alive timeout above the ALB's idle timeout
 
 The only recommendation I will make is the one I keep coming back to. Take the time to understand the tools you are working with, including the parts that sit between your tools. Kubernetes and the ALB were each doing exactly what they were designed to do. The outage lived in the gap between them.
 
 # References
+
+[Load Balancing | Amazon EKS Best Practices](https://docs.aws.amazon.com/eks/latest/best-practices/load-balancing.html)
 
 [Pod readiness gate | AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/deploy/pod_readiness_gate/)
 
@@ -377,5 +420,9 @@ The only recommendation I will make is the one I keep coming back to. Take the t
 [http.Server.Shutdown | Go Documentation](https://pkg.go.dev/net/http#Server.Shutdown)
 
 [Target groups for your Application Load Balancers | AWS](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html)
+
+[How do I troubleshoot Application Load Balancer HTTP 502 errors? | AWS](https://repost.aws/knowledge-center/elb-alb-troubleshoot-502-errors)
+
+[JSONArgsRecommended | Docker Documentation](https://docs.docker.com/reference/build-checks/json-args-recommended/)
 
 [Understanding and Managing the Node.js Application Lifecycle](/understanding-and-managing-the-node-js-application-lifecycle)
