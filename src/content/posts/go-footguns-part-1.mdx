@@ -51,7 +51,7 @@ func main() {
 
 [Run in Go Playground ↗](https://go.dev/play/p/EGomOvQeXXA)
 
-A map value in **Go** is a small header pointing at the real data. Assigning it to a new variable copies the header, so `defaults` and `settings` are two names for the same map. Change one and you've changed both.
+A map value in **Go** is a pointer to a data structure that the runtime manages. Assigning it to a new variable copies the pointer, so `defaults` and `settings` are two names for the same map. Change one and you've changed both.
 
 The version I actually saw in a pull request was two package level variables built from the same map literal, one of which was later modified at startup. Every test passed because no test checked the other variable.
 
@@ -101,7 +101,7 @@ A slice has three parts: a pointer to an array, a length, and a **capacity**. `s
 
 In the real code, `scores` was a cache shared across requests. One request appending to its result would corrupt the answer for the next request. Under a single request in a test it looked perfect.
 
-The fix is a single character, using the three index slice expression to clamp the capacity.
+The fix is one extra index, using the three index slice expression to clamp the capacity.
 
 ```go
 func topTwo() []int {
@@ -146,7 +146,7 @@ func main() {
 
 Where did Alice go?
 
-With `ReuseRecord` turned on, every call to `Read` returns the **same** backing slice with new contents. Storing it stores a reference to a buffer that the next `Read` overwrites. By the end, every row in `rows` points at the same buffer, which holds whatever was read last.
+With `ReuseRecord` turned on, `Read` is allowed to return the **same** backing slice every time, with new contents. In practice it does. Storing it stores a reference to a buffer that the next `Read` overwrites. By the end, every row in `rows` points at the same buffer, which holds whatever was read last.
 
 The real version of this was a streaming join over a file several gigabytes in size. With a small input it was fine, because the bug only shows up once you keep a row past the next read. With the real input the output was quietly wrong.
 
@@ -177,6 +177,7 @@ A few things I've found genuinely help:
 
 - **Test the caller, not just the function.** For the subslice bug, a test that only checked `len(topTwo())` would pass. A test that appends to the result and then reads the original would fail.
 - **Test with realistic input.** The CSV bug needed more than one row. Plenty of real bugs need more than one request at a time.
+- **Run concurrent tests with `-race`.** The shared cache in the subslice example is exactly what the race detector catches, as long as a test sends two requests at once. `go test -race` costs some speed and is worth it.
 - **Pay attention to AI review comments on these specific shapes.** I'm not usually one to trust an automated reviewer, but on this family of bugs it was right far more often than it was wrong. All three of the examples in this post were first flagged by one.
 
 In [part 2](/go-footguns-part-2) I'll look at the other half: comparisons that compile, run, and answer a question you didn't ask.
