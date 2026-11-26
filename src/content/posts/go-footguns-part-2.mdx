@@ -71,6 +71,8 @@ fmt.Println("errors.Is(err, ErrNotFound):", errors.Is(err, ErrNotFound))
 
 > ℹ️ The [errorlint](https://github.com/polyfloyd/go-errorlint) linter flags `==` comparisons on errors, and it's included in **golangci-lint**. `go vet` won't catch it.
 
+There is one fair exception. `io.EOF` is documented to be returned as it is, never wrapped, so `err == io.EOF` straight after a `Read` is correct and very common. errorlint knows this and doesn't flag it.
+
 ## `errors.As` and Embedding
 
 `errors.Is` has a sibling, `errors.As`, which looks for an error by its type instead of its value. This one surprised me, because embedding feels like it should just work.
@@ -100,7 +102,7 @@ func main() {
 
 [Run in Go Playground ↗](https://go.dev/play/p/MNok-63KyjH)
 
-`QueryError` embeds `NotFoundError`. It even prints like one, because the embedded `Error()` method is promoted. But `errors.As` doesn't look at what a type embeds. It walks the chain of errors returned by `Unwrap()` and checks the type of each one. `QueryError` has no `Unwrap()`, so the chain is one link long, and that link is a `QueryError`.
+`QueryError` embeds `NotFoundError`. It even prints like one, because the embedded `Error()` method is promoted. But `errors.As` doesn't look at what a type embeds. It walks the chain of errors returned by `Unwrap()` and checks the type of each one, or asks the error itself if it has an `As` method. `QueryError` has no `Unwrap()`, so the chain is one link long, and that link is a `QueryError`.
 
 If you want `errors.As` to find it, put it in the chain.
 
@@ -153,6 +155,8 @@ func main() {
 An interface value in **Go** is a pair: a **type** and a **value**. It's only `nil` when both halves are `nil`.
 
 `newVerifier(false)` returns a `nil` pointer, but the function's return type is `Verifier`, so **Go** wraps it in an interface whose type half is `*emailVerifier`. The value half is `nil`. The type half isn't. So `v == nil` is `false`, the caller's nil check passes, and the next line calls a method on a pointer that is, in fact, nil.
+
+In this example that call doesn't even panic. `Verify` doesn't read any fields, so it happily returns `true` on a nil pointer, and the check passes without a word. If the method did read a field, you'd get a nil pointer panic instead. I'm not sure which is worse.
 
 The bug is in that first version. Inside `newVerifier` the variable `v` really is nil, and `return v` reads exactly like `return nil`. The difference only shows up in the caller.
 
@@ -278,15 +282,16 @@ type Settings struct {
 s := Settings{Retries: 3, Name: "a"}
 json.Unmarshal([]byte(`{"name":"b"}`), &s)
 
-// Output:
-// {Retries:3 Name:b}
+// After unmarshalling:
+// retries = 3
+// name    = "b"
 ```
 
 [Run in Go Playground ↗](https://go.dev/play/p/KxiSds9MyqI)
 
 # The Rule
 
-**On anything that isn't a plain number or string, `==`, `!= nil` and `errors.As` compare the container, not the contents.** Before you write one, ask yourself what the container is, and whether that's really what you want compared.
+**On interfaces and pointers, `==` and `!= nil` compare the container, not the contents, and `errors.As` only sees what's in the `Unwrap` chain.** Structs and arrays compare field by field, so they're only as safe as their fields. A pointer field still compares addresses. Before you write a comparison on anything else, ask yourself what the container is, and whether that's really what you want compared.
 
 # Catching These
 
