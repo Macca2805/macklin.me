@@ -34,9 +34,9 @@ pq: duplicate key value violates unique constraint "pg_type_typname_nsp_index"
 
 That constraint lives in the **Postgres** system catalog. It fires when two transactions try to create the same table at the same moment. In my case, two test packages both started at once, both saw an empty database, and both tried to create the migrations tracking table.
 
-**golang-migrate** does have locking of its own, but in my testing two processes could still race each other on the very first migration.
+**golang-migrate** takes an advisory lock of its own, so in theory this shouldn't happen. Older versions didn't lock while creating the tracking table, and even on a newer version two of my test processes still collided on the very first migration. I never got to the bottom of why. Rather than depend on behaviour I didn't understand, I wanted a lock I controlled.
 
-It's easy to file this under "flaky" and hit retry. Retry even works, because by the second attempt the table exists. But a failure that reproduces three times out of three is a race, and this one happens more on a laptop with lots of cores than on a 2 CPU CI runner.
+It's easy to file this under "flaky" and hit retry. Retry even works, because by the second attempt the table exists. But a failure that keeps coming back is a race, and this one happens more on a laptop with lots of cores than on a 2 CPU CI runner.
 
 # Fix 0: Run One Package at a Time
 
@@ -69,6 +69,8 @@ func lockForMigrations(ctx context.Context, conn *sql.Conn) error {
 }
 ```
 
+> ℹ️ `42` is just an example. Advisory lock keys are shared by everything in the database, so anything else that uses `42` will block you. Pick a distinctive number, or derive one from a name the way **golang-migrate** does.
+
 `pg_advisory_lock` **blocks** until the lock is free. That sounds like exactly what we want.
 
 The lock is taken on its own dedicated connection, and the migrations run on a different one. Hold on to that detail, because it matters later.
@@ -85,7 +87,7 @@ Then someone added a migration that created an index **concurrently**.
 CREATE INDEX CONCURRENTLY orders_customer_id ON orders (customer_id);
 ```
 
-`CREATE INDEX CONCURRENTLY` builds an index without taking a lock that blocks writes. That makes it the right way to add an index to a busy production table. The way it achieves this is important: part way through the build, it **waits for every other transaction that has an open snapshot to finish**. A snapshot is the view of the database a query is working from. If an older snapshot is still in use, the new index can't be marked as valid yet.
+`CREATE INDEX CONCURRENTLY` builds an index without taking a lock that blocks writes. That makes it the right way to add an index to a busy production table. The way it achieves this is important: part way through the build, it **waits for every transaction with a snapshot older than the index build to finish**. A snapshot is the view of the database a query is working from. If an older snapshot is still in use, the new index can't be marked as valid yet.
 
 The test suite didn't fail. It hung. Indefinitely.
 
@@ -317,6 +319,8 @@ postgres=# SELECT pg_try_advisory_lock(42);
 It answers straight away instead of hanging, and leaves nothing behind for anyone else to wait on.
 
 > ❗ **Warning:** Notice the `ctx.Done()` case. A wait with no way out is exactly how this showed up as "CI is stuck" instead of a failure with a useful message. Always give a lock loop a way to give up.
+
+A `statement_timeout` on the test database connections is a good second line of defence. With one in place, the blocked `pg_advisory_lock` in tab 2 would have been cancelled, its snapshot released, and the index would have finished. That turns a hang into an error you can read.
 
 # Problem 3: Out of Connections
 
